@@ -422,8 +422,100 @@ vk::viewable_image* VKGSRender::get_present_source(/* inout */ vk::present_surfa
 	return image_to_flip;
 }
 
+void VKGSRender::poll_libretro_frame_capture()
+{
+	if (m_libretro_capture_disabled || !m_libretro_capture_command_buffer || !m_libretro_capture_buffer)
+	{
+		return;
+	}
+
+	try
+	{
+		// Do not wait here. The command buffer belongs to the previous flip and
+		// may still be in flight while the emulator is preparing this one.
+		if (!m_libretro_capture_command_buffer->poke())
+		{
+			return;
+		}
+
+		const usz capture_size = m_libretro_capture_size;
+		const auto src = static_cast<const u8*>(m_libretro_capture_buffer->map(0, capture_size));
+		std::vector<u8> frame(capture_size);
+		std::memcpy(frame.data(), src, capture_size);
+		m_libretro_capture_buffer->unmap();
+
+		m_libretro_capture_command_buffer = nullptr;
+		if (m_frame->can_consume_frame())
+		{
+			m_frame->present_frame(std::move(frame), m_libretro_capture_width * 4,
+				m_libretro_capture_width, m_libretro_capture_height, m_libretro_capture_is_bgra);
+		}
+	}
+	catch (const std::exception& exception)
+	{
+		m_libretro_capture_command_buffer = nullptr;
+		m_libretro_capture_disabled = true;
+		rsx_log.error("Libretro frame capture disabled after a Vulkan readback error: %s", exception.what());
+	}
+	catch (...)
+	{
+		m_libretro_capture_command_buffer = nullptr;
+		m_libretro_capture_disabled = true;
+		rsx_log.error("Libretro frame capture disabled after an unknown Vulkan readback error");
+	}
+}
+
+void VKGSRender::queue_libretro_frame_capture(vk::viewable_image* image, u32 width, u32 height)
+{
+	if (m_libretro_capture_disabled || m_libretro_capture_command_buffer || !image || !width || !height || !m_frame->can_consume_frame())
+	{
+		return;
+	}
+
+	try
+	{
+		const usz capture_size = static_cast<usz>(width) * height * 4;
+		if (!m_libretro_capture_buffer || m_libretro_capture_buffer->size() < capture_size)
+		{
+			m_libretro_capture_buffer = std::make_unique<vk::buffer>(
+				*m_device, utils::align(capture_size, 0x100000), m_device->get_memory_mapping().host_visible_coherent,
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				VK_BUFFER_USAGE_TRANSFER_DST_BIT, 0, VMM_ALLOCATION_POOL_UNDEFINED);
+		}
+
+		VkBufferImageCopy copy_info{};
+		copy_info.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		copy_info.imageSubresource.layerCount = 1;
+		copy_info.imageExtent = { width, height, 1 };
+
+		image->push_layout(*m_current_command_buffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+		vk::copy_image_to_buffer(*m_current_command_buffer, image, m_libretro_capture_buffer.get(), copy_info);
+		image->pop_layout(*m_current_command_buffer);
+
+		m_libretro_capture_size = capture_size;
+		m_libretro_capture_width = width;
+		m_libretro_capture_height = height;
+		m_libretro_capture_is_bgra = image->format() == VK_FORMAT_B8G8R8A8_UNORM;
+		m_libretro_capture_command_buffer = m_current_command_buffer;
+	}
+	catch (const std::exception& exception)
+	{
+		m_libretro_capture_command_buffer = nullptr;
+		m_libretro_capture_disabled = true;
+		rsx_log.error("Libretro frame capture disabled after a Vulkan readback setup error: %s", exception.what());
+	}
+	catch (...)
+	{
+		m_libretro_capture_command_buffer = nullptr;
+		m_libretro_capture_disabled = true;
+		rsx_log.error("Libretro frame capture disabled after an unknown Vulkan readback setup error");
+	}
+}
+
 void VKGSRender::flip(const rsx::display_flip_info_t& info)
 {
+	poll_libretro_frame_capture();
+
 	// Check swapchain condition/status
 	if (!m_swapchain->supports_automatic_wm_reports())
 	{
@@ -659,10 +751,9 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 
 	const bool has_overlay = (m_overlay_manager && m_overlay_manager->has_visible());
 	const bool user_asked_for_screenshot = g_user_asked_for_screenshot.exchange(false);
-	// A non-GUI frontend can consume frames without using RPCS3's recording
-	// subsystem. The desktop gs_frame only reports true while recording, so this
-	// keeps the existing desktop behavior and lets libretro request readback.
-	const bool need_media_capture = user_asked_for_screenshot || m_frame->can_consume_frame();
+	const bool user_is_recording = (g_recording_mode != recording_mode::stopped && m_frame->can_consume_frame());
+	const bool need_media_capture = user_asked_for_screenshot || user_is_recording;
+	const bool need_libretro_frame = !user_asked_for_screenshot && !user_is_recording && m_frame->can_consume_frame();
 
 	const auto render_overlays = [&](vk::framebuffer_holder* fbo, const areau& area)
 	{
@@ -770,6 +861,16 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 		{
 			m_frame->present_frame(std::move(sshot_frame), buffer_width * 4, buffer_width, buffer_height, is_bgra);
 		}
+	}
+
+	// Libretro's video callback is deliberately decoupled from this command
+	// buffer. queue_swap_request() submits the copy together with the frame;
+	// poll_libretro_frame_capture() consumes it on a later flip once its fence is
+	// ready. At most one transfer is in flight, so a slow frontend drops a frame
+	// instead of forcing a synchronous device wait.
+	if (image_to_flip && need_libretro_frame)
+	{
+		queue_libretro_frame_capture(image_to_flip, buffer_width, buffer_height);
 	}
 
 	if (!image_to_flip || aspect_ratio.x1 || aspect_ratio.y1)

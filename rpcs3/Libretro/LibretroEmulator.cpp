@@ -32,6 +32,7 @@
 #include <functional>
 #include <mutex>
 #include <span>
+#include <string_view>
 #include <thread>
 
 #ifdef _WIN32
@@ -66,6 +67,18 @@ std::string libretro_localized_string(localized_string_id id, const char*)
 	case localized_string_id::PROGRESS_DIALOG_BUILDING_SPU_CACHE: return "Building SPU Cache...";
 	default: return {};
 	}
+}
+
+bool libretro_frame_readback_disabled()
+{
+	const char* value = std::getenv("RPCS3_LIBRETRO_DISABLE_FRAME_READBACK");
+	if (!value)
+	{
+		return false;
+	}
+
+	const std::string_view setting(value);
+	return setting == "1" || setting == "true" || setting == "TRUE" || setting == "yes" || setting == "on";
 }
 
 class libretro_audio_backend final : public AudioBackend
@@ -308,11 +321,13 @@ public:
 		: m_mailbox(std::move(mailbox))
 		, m_window(window)
 	{
+		m_frame_readback_enabled = !libretro_frame_readback_disabled();
 	}
 #else
 	explicit libretro_gs_frame(std::shared_ptr<frame_mailbox> mailbox)
 		: m_mailbox(std::move(mailbox))
 	{
+		m_frame_readback_enabled = !libretro_frame_readback_disabled();
 	}
 #endif
 
@@ -342,7 +357,7 @@ public:
 
 	bool can_consume_frame() const override
 	{
-		return m_open;
+		return m_open && m_frame_readback_enabled;
 	}
 
 	void present_frame(std::vector<u8>&& data, u32 pitch, u32 width, u32 height, bool is_bgra) const override
@@ -360,6 +375,7 @@ public:
 private:
 	std::shared_ptr<frame_mailbox> m_mailbox;
 	std::atomic<bool> m_open{true};
+	bool m_frame_readback_enabled = true;
 #ifdef _WIN32
 	HWND m_window = nullptr;
 #endif

@@ -196,6 +196,18 @@ private:
 
 	std::unique_ptr<vk::image> m_overlay_recording_img;
 
+	// Libretro consumes frames through a second Vulkan/CPU boundary. Keep the
+	// readback asynchronous and bounded to one in-flight transfer so presenting
+	// a frame never forces a device-wide wait or allocates a staging buffer per
+	// flip.
+	std::unique_ptr<vk::buffer> m_libretro_capture_buffer;
+	vk::command_buffer_chunk* m_libretro_capture_command_buffer = nullptr;
+	usz m_libretro_capture_size = 0;
+	u32 m_libretro_capture_width = 0;
+	u32 m_libretro_capture_height = 0;
+	bool m_libretro_capture_is_bgra = false;
+	bool m_libretro_capture_disabled = false;
+
 	//Vertex layout
 	rsx::vertex_input_layout m_vertex_layout;
 
@@ -230,6 +242,8 @@ private:
 	bool reinitialize_swapchain();
 
 	vk::viewable_image* get_present_source(vk::present_surface_info* info, const rsx::avconf& avconfig);
+	void poll_libretro_frame_capture();
+	void queue_libretro_frame_capture(vk::viewable_image* image, u32 width, u32 height);
 
 	void begin_render_pass();
 	void close_render_pass();
