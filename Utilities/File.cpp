@@ -5,6 +5,7 @@
 #include <span>
 #include <unordered_map>
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <map>
 #include <iostream>
@@ -2259,6 +2260,47 @@ const std::string& fs::get_config_dir([[maybe_unused]] bool get_config_subdirect
 				// Clear buffer on failure and notify user
 				MessageBoxA(nullptr, fmt::format("GetEnvironmentVariable(RPCS3_CONFIG_DIR) failed: error: %s", fmt::win_error{GetLastError(), nullptr}).c_str(), "fs::get_config_dir()", MB_ICONERROR);
 				buf.clear();
+			}
+		}
+
+		// A libretro core is loaded before the frontend can provide its system
+		// directory through retro_environment_t. Some RPCS3 global configuration
+		// objects query this function during DLL initialization, so locate the
+		// conventional RetroArch system/rpcs3 directory from the module itself.
+		if (size == 0)
+		{
+			static int module_anchor = 0;
+			HMODULE module = nullptr;
+			wchar_t module_path_w[32768]{};
+
+			if (GetModuleHandleExW(
+				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCWSTR>(&module_anchor), &module) &&
+				GetModuleFileNameW(module, module_path_w, static_cast<DWORD>(std::size(module_path_w))))
+			{
+				std::string module_path = wchar_to_utf8(module_path_w);
+				std::replace(module_path.begin(), module_path.end(), '\\', '/');
+
+				const usz filename_pos = module_path.find_last_of('/');
+				std::string filename = filename_pos == umax ? module_path : module_path.substr(filename_pos + 1);
+				std::transform(filename.begin(), filename.end(), filename.begin(),
+					[](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+
+				if (filename == "rpcs3_libretro.dll" && filename_pos != umax)
+				{
+					std::string frontend_dir = module_path.substr(0, filename_pos);
+					const usz cores_pos = frontend_dir.find_last_of('/');
+
+					if (cores_pos != umax)
+					{
+						frontend_dir.resize(cores_pos + 1);
+						std::string libretro_dir = frontend_dir + "system/rpcs3/";
+						if (is_dir(libretro_dir))
+						{
+							return libretro_dir;
+						}
+					}
+				}
 			}
 		}
 

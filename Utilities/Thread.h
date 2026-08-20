@@ -327,6 +327,10 @@ public:
 	// Detect layout
 	static void detect_cpu_layout();
 
+	// Release process-wide exception hooks before unloading a dynamically
+	// hosted RPCS3 image. Standalone builds normally keep these until exit.
+	static void cleanup_exception_handler() noexcept;
+
 	// Returns a core affinity mask. Set whether to generate the high priority set or not
 	static u64 get_affinity_mask(thread_class group);
 

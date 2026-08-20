@@ -63,6 +63,8 @@ option(USE_LTO "Use LTO for building" ON)
 option(BUILD_RPCS3_TESTS "Build RPCS3 unit tests." OFF)
 option(RUN_RPCS3_TESTS "Run RPCS3 unit tests. Requires BUILD_RPCS3_TESTS" OFF)
 option(USE_GAMEMODE "Choose whether to enable GameMode features or not." ON)
+option(BUILD_RPCS3_GUI "Build the RPCS3 desktop frontend." ON)
+option(BUILD_LIBRETRO "Build the experimental RPCS3 libretro core." OFF)
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/buildfiles/cmake")
 
@@ -102,7 +104,11 @@ if(MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/wd4530;/utf-8>") # C++ exception handler used, but unwind semantics are not enabled
 endif()
 
-add_subdirectory(3rdparty)
+# The libretro frontend embeds the emulator core even when the desktop Qt
+# frontend is disabled.
+if(ANDROID OR BUILD_RPCS3_GUI OR BUILD_RPCS3_TESTS OR BUILD_LIBRETRO)
+    add_subdirectory(3rdparty)
+endif()
 
 if (DISABLE_LTO)
     if (CMAKE_C_FLAGS)
@@ -136,4 +142,8 @@ if(BUILD_RPCS3_TESTS)
 endif()
 add_subdirectory(rpcs3)
 
-set_directory_properties(PROPERTIES VS_STARTUP_PROJECT rpcs3)
+if(TARGET rpcs3)
+    set_directory_properties(PROPERTIES VS_STARTUP_PROJECT rpcs3)
+elseif(TARGET rpcs3_libretro)
+    set_directory_properties(PROPERTIES VS_STARTUP_PROJECT rpcs3_libretro)
+endif()

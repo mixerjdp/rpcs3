@@ -425,6 +425,17 @@ bool iso_file_decryption::init(const std::string& path, iso_archive* archive)
 	// Ensure the region count is a proper value
 	if (region_count < 1 || region_count > 127) // It's non-PS3ISO
 	{
+		// Older RPCS3 versions also supported decrypted, repacked ISO9660 images
+		// without a PS3 disc region table. is_iso_file() has already verified the
+		// ISO9660 signature, and the archive hierarchy was parsed before init().
+		// Keep these regular files on the unencrypted path while preserving the
+		// strict region-table requirement for physical discs and malformed values.
+		if (region_count == 0 && !fs::is_optical_raw_device(path))
+		{
+			iso_log.warning("init: No PS3 region table found; using legacy unencrypted ISO fallback: '%s'", path);
+			return true;
+		}
+
 		iso_log.error("init: Failed to read region information (region_count=%lu): '%s'", region_count, path);
 		return false;
 	}

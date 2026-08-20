@@ -2303,6 +2303,10 @@ static void append_thread_name(std::string& msg)
 
 #ifdef _WIN32
 
+static PVOID s_vectored_exception_handler = nullptr;
+static LPTOP_LEVEL_EXCEPTION_FILTER s_previous_exception_filter = nullptr;
+static bool s_exception_filter_installed = false;
+
 static LONG exception_handler(PEXCEPTION_POINTERS pExp) noexcept
 {
 	if (pExp->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT)
@@ -2502,18 +2506,18 @@ static LONG exception_filter(PEXCEPTION_POINTERS pExp) noexcept
 const bool s_exception_handler_set = []() -> bool
 {
 #ifdef USE_ASAN
-	if (!AddVectoredExceptionHandler(FALSE, static_cast<PVECTORED_EXCEPTION_HANDLER>(exception_handler)))
+	s_vectored_exception_handler = AddVectoredExceptionHandler(FALSE, static_cast<PVECTORED_EXCEPTION_HANDLER>(exception_handler));
 #else
-	if (!AddVectoredExceptionHandler(1, static_cast<PVECTORED_EXCEPTION_HANDLER>(exception_handler)))
+	s_vectored_exception_handler = AddVectoredExceptionHandler(1, static_cast<PVECTORED_EXCEPTION_HANDLER>(exception_handler));
 #endif
+	if (!s_vectored_exception_handler)
 	{
 		report_fatal_error("AddVectoredExceptionHandler() failed.");
 	}
 
-	if (!SetUnhandledExceptionFilter(static_cast<LPTOP_LEVEL_EXCEPTION_FILTER>(exception_filter)))
-	{
-		report_fatal_error("SetUnhandledExceptionFilter() failed.");
-	}
+	// A null return value is a valid previous-filter value, not an error.
+	s_previous_exception_filter = SetUnhandledExceptionFilter(static_cast<LPTOP_LEVEL_EXCEPTION_FILTER>(exception_filter));
+	s_exception_filter_installed = true;
 
 	return true;
 }();
@@ -2723,6 +2727,22 @@ const bool s_exception_handler_set = []() -> bool
 }();
 
 #endif
+
+void thread_ctrl::cleanup_exception_handler() noexcept
+{
+#ifdef _WIN32
+	if (s_vectored_exception_handler)
+	{
+		RemoveVectoredExceptionHandler(std::exchange(s_vectored_exception_handler, nullptr));
+	}
+
+	if (std::exchange(s_exception_filter_installed, false))
+	{
+		SetUnhandledExceptionFilter(s_previous_exception_filter);
+		s_previous_exception_filter = nullptr;
+	}
+#endif
+}
 
 const bool s_terminate_handler_set = []() -> bool
 {

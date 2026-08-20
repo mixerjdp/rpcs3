@@ -330,7 +330,9 @@ void GLGSRender::flip(const rsx::display_flip_info_t& info)
 	{
 		const bool user_asked_for_screenshot = g_user_asked_for_screenshot.exchange(false);
 
-		if (user_asked_for_screenshot || (g_recording_mode != recording_mode::stopped && m_frame->can_consume_frame()))
+		// Non-GUI frontends can consume frames without enabling RPCS3 recording.
+		// The desktop gs_frame only reports true while recording.
+		if (user_asked_for_screenshot || m_frame->can_consume_frame())
 		{
 			static const gl::pixel_pack_settings pack_settings{};
 

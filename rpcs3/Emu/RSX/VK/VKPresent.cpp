@@ -659,8 +659,10 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 
 	const bool has_overlay = (m_overlay_manager && m_overlay_manager->has_visible());
 	const bool user_asked_for_screenshot = g_user_asked_for_screenshot.exchange(false);
-	const bool user_is_recording = (g_recording_mode != recording_mode::stopped && m_frame->can_consume_frame());
-	const bool need_media_capture = user_asked_for_screenshot || user_is_recording;
+	// A non-GUI frontend can consume frames without using RPCS3's recording
+	// subsystem. The desktop gs_frame only reports true while recording, so this
+	// keeps the existing desktop behavior and lets libretro request readback.
+	const bool need_media_capture = user_asked_for_screenshot || m_frame->can_consume_frame();
 
 	const auto render_overlays = [&](vk::framebuffer_holder* fbo, const areau& area)
 	{

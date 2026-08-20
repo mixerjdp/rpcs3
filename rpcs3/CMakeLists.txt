@@ -23,7 +23,7 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
     endif()
 endif()
 
-if (NOT ANDROID)
+if (NOT ANDROID AND BUILD_RPCS3_GUI)
     # Qt
     # finds Qt libraries and setups custom commands for MOC and UIC
     # Must be done here because generated MOC and UIC targets cant
@@ -31,16 +31,22 @@ if (NOT ANDROID)
     include(${CMAKE_SOURCE_DIR}/3rdparty/qt6.cmake)
 endif()
 
-# subdirectories
-add_subdirectory(Emu)
+# The desktop and libretro frontends share the same emulator implementation.
+if(ANDROID OR BUILD_RPCS3_GUI OR BUILD_RPCS3_TESTS OR BUILD_LIBRETRO)
+    add_subdirectory(Emu)
+endif()
 
-if (NOT ANDROID)
+if (BUILD_LIBRETRO)
+    add_subdirectory(Libretro)
+endif()
+
+if (NOT ANDROID AND BUILD_RPCS3_GUI)
     add_subdirectory(rpcs3qt)
 endif()
 
 gen_git_version(${CMAKE_CURRENT_SOURCE_DIR})
 
-if (NOT ANDROID)
+if (NOT ANDROID AND BUILD_RPCS3_GUI)
     # Build rpcs3_lib
     add_library(rpcs3_lib STATIC)
 
@@ -173,6 +179,10 @@ endif()
 
 # Unit tests
 if(BUILD_RPCS3_TESTS)
+    if(NOT TARGET rpcs3_lib)
+        message(FATAL_ERROR "BUILD_RPCS3_TESTS requires BUILD_RPCS3_GUI because the tests currently link rpcs3_lib.")
+    endif()
+
     find_package(GTest REQUIRED)
 
     message(STATUS "Building unit tests...")
