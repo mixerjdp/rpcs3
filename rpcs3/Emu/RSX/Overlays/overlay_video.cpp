@@ -41,9 +41,27 @@ namespace rsx
 
 		void video_view::init_video(const std::string& video_path, const std::string& audio_path)
 		{
-			if (video_path.empty()) return;
+			if (video_path.empty())
+			{
+				return;
+			}
 
-			m_video_source = ensure(Emu.GetCallbacks().make_video_source());
+			// A video overlay is optional. Headless/frontends without a media
+			// backend should keep the thumbnail/static overlay instead of
+			// aborting the whole emulator when a movie is requested.
+			if (!Emu.GetCallbacks().make_video_source)
+			{
+				rsx_log.warning("Skipping video overlay because no video source is available.");
+				return;
+			}
+
+			m_video_source = Emu.GetCallbacks().make_video_source();
+			if (!m_video_source)
+			{
+				rsx_log.warning("Skipping video overlay because the frontend did not create a video source.");
+				return;
+			}
+
 			m_video_source->set_update_callback([this]()
 			{
 				if (m_video_active)
