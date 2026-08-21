@@ -198,8 +198,16 @@ void core_state::init()
 	m_emulator = std::make_unique<emulator_bridge>();
 
 	std::string error;
-	const std::string data_directory = get_data_directory();
-	if (!m_emulator->initialize(data_directory, error))
+	const std::string system_directory = get_system_directory();
+	std::string save_directory = get_save_directory();
+	if (save_directory.empty())
+	{
+		// Older frontends may not expose RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY.
+		// Keep the core usable there while still preferring the save root.
+		save_directory = system_directory;
+	}
+
+	if (!m_emulator->initialize(system_directory, save_directory, error))
 	{
 		log(RETRO_LOG_ERROR, error.c_str());
 		show_message(error.c_str(), 600);
@@ -604,13 +612,25 @@ void core_state::show_message(const char* message, unsigned frames) const
 	m_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &frontend_message);
 }
 
-std::string core_state::get_data_directory() const
+std::string core_state::get_system_directory() const
 {
 	const char* system_directory = nullptr;
 	if (m_environment && m_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_directory) &&
 		system_directory && *system_directory)
 	{
-		return (std::filesystem::u8path(system_directory) / "rpcs3").string();
+		return std::filesystem::u8path(system_directory).string();
+	}
+
+	return {};
+}
+
+std::string core_state::get_save_directory() const
+{
+	const char* save_directory = nullptr;
+	if (m_environment && m_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save_directory) &&
+		save_directory && *save_directory)
+	{
+		return std::filesystem::u8path(save_directory).string();
 	}
 
 	return {};

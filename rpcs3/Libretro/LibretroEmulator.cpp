@@ -4,6 +4,7 @@
 #include "Emu/IdManager.h"
 #include "Emu/localized_string_id.h"
 #include "Emu/system_config.h"
+#include "Emu/vfs_config.h"
 #include "Emu/Audio/AudioBackend.h"
 #include "Emu/Audio/Null/null_enumerator.h"
 #include "Emu/Cell/Modules/cellMsgDialog.h"
@@ -416,21 +417,42 @@ namespace rpcs3::libretro
 class emulator_bridge::impl final
 {
 public:
-	bool initialize(const std::string& data_directory, std::string& error)
+	bool initialize(const std::string& system_directory, const std::string& save_directory, std::string& error)
 	{
 		if (m_initialized)
 		{
 			return true;
 		}
 
-		if (data_directory.empty() || !std::filesystem::is_directory(std::filesystem::u8path(data_directory)))
+		if (system_directory.empty())
 		{
-			error = "RPCS3 data directory does not exist: " + data_directory;
+			error = "RetroArch did not provide a system directory for RPCS3.";
+			return false;
+		}
+
+		std::filesystem::path system_path = std::filesystem::u8path(system_directory);
+		if (system_path.filename().string() != "rpcs3" && system_path.filename().string() != "RPCS3")
+		{
+			system_path /= "rpcs3";
+		}
+		const std::filesystem::path save_path = std::filesystem::u8path(save_directory.empty() ? system_directory : save_directory) / "rpcs3";
+		std::error_code filesystem_error;
+		std::filesystem::create_directories(system_path, filesystem_error);
+		if (filesystem_error || !std::filesystem::is_directory(system_path))
+		{
+			error = "Could not create the RPCS3 system directory: " + system_path.string();
+			return false;
+		}
+		filesystem_error.clear();
+		std::filesystem::create_directories(save_path / "dev_hdd0", filesystem_error);
+		if (filesystem_error || !std::filesystem::is_directory(save_path))
+		{
+			error = "Could not create the RPCS3 save directory: " + save_path.string();
 			return false;
 		}
 
 #ifdef _WIN32
-		std::wstring data_directory_w = std::filesystem::u8path(data_directory).wstring();
+		std::wstring data_directory_w = system_path.wstring();
 		// fs::get_config_dir() treats RPCS3_CONFIG_DIR like an executable path
 		// and keeps everything through its final separator. Preserve the actual
 		// directory by making that separator explicit.
@@ -443,6 +465,8 @@ public:
 			error = "Could not set RPCS3_CONFIG_DIR.";
 			return false;
 		}
+
+		set_libretro_vfs_paths(system_path.string(), save_path.string());
 
 		if (!m_window.create())
 		{
@@ -597,6 +621,7 @@ public:
 		{
 			Emulator::CleanUp();
 		}
+		clear_libretro_vfs_paths();
 
 		// RPCS3 standalone keeps its process-wide exception hooks until process
 		// exit. A libretro core is unloaded with FreeLibrary, so leaving callbacks
@@ -790,9 +815,9 @@ emulator_bridge::emulator_bridge()
 
 emulator_bridge::~emulator_bridge() = default;
 
-bool emulator_bridge::initialize(const std::string& data_directory, std::string& error)
+bool emulator_bridge::initialize(const std::string& system_directory, const std::string& save_directory, std::string& error)
 {
-	return m_impl->initialize(data_directory, error);
+	return m_impl->initialize(system_directory, save_directory, error);
 }
 
 bool emulator_bridge::boot(const std::string& content_path, std::string& error)

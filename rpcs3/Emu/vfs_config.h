@@ -47,3 +47,12 @@ private:
 };
 
 extern cfg_vfs g_cfg_vfs;
+
+// Libretro keeps core work data and frontend-managed user data in separate
+// roots. These overrides are process-local and are applied after the regular
+// RPCS3 VFS configuration is loaded.
+void set_libretro_vfs_paths(std::string system_directory, std::string save_directory);
+void clear_libretro_vfs_paths();
+void apply_libretro_vfs_paths();
+bool is_libretro_vfs_active();
+std::string get_libretro_save_directory();

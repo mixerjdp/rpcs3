@@ -33,7 +33,7 @@ public:
 	emulator_bridge(const emulator_bridge&) = delete;
 	emulator_bridge& operator=(const emulator_bridge&) = delete;
 
-	bool initialize(const std::string& data_directory, std::string& error);
+	bool initialize(const std::string& system_directory, const std::string& save_directory, std::string& error);
 	bool boot(const std::string& content_path, std::string& error);
 	void stop();
 	bool restart(std::string& error);

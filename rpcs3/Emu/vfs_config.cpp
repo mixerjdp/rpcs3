@@ -6,6 +6,63 @@ LOG_CHANNEL(vfs_log, "VFS");
 
 cfg_vfs g_cfg_vfs{};
 
+namespace
+{
+std::string g_libretro_system_directory;
+std::string g_libretro_save_directory;
+
+std::string ensure_trailing_separator(std::string path)
+{
+	if (!path.empty() && path.back() != fs::delim[0] && path.back() != fs::delim[1])
+	{
+		path += fs::delim[0];
+	}
+	return path;
+}
+}
+
+void set_libretro_vfs_paths(std::string system_directory, std::string save_directory)
+{
+	g_libretro_system_directory = ensure_trailing_separator(std::move(system_directory));
+	g_libretro_save_directory = ensure_trailing_separator(std::move(save_directory));
+}
+
+void clear_libretro_vfs_paths()
+{
+	g_libretro_system_directory.clear();
+	g_libretro_save_directory.clear();
+}
+
+bool is_libretro_vfs_active()
+{
+	return !g_libretro_system_directory.empty() && !g_libretro_save_directory.empty();
+}
+
+std::string get_libretro_save_directory()
+{
+	return g_libretro_save_directory;
+}
+
+void apply_libretro_vfs_paths()
+{
+	if (!is_libretro_vfs_active())
+	{
+		return;
+	}
+
+	// dev_hdd0 contains PS3 savedata, trophies, licenses and installed data;
+	// keep it in the frontend's save root. RPCS3's working trees and caches stay
+	// under system/<core>.
+	g_cfg_vfs.emulator_dir.set(g_libretro_system_directory);
+	g_cfg_vfs.dev_hdd0.set(g_libretro_save_directory + "dev_hdd0/");
+	g_cfg_vfs.dev_hdd1.set(g_libretro_system_directory + "dev_hdd1/");
+	g_cfg_vfs.dev_flash.set(g_libretro_system_directory + "dev_flash/");
+	g_cfg_vfs.dev_flash2.set(g_libretro_system_directory + "dev_flash2/");
+	g_cfg_vfs.dev_flash3.set(g_libretro_system_directory + "dev_flash3/");
+	g_cfg_vfs.dev_bdvd.set(g_libretro_system_directory + "dev_bdvd/");
+	g_cfg_vfs.games_dir.set(g_libretro_system_directory + "games/");
+}
+
 std::string cfg_vfs::get(const cfg::string& _cfg, std::string_view emu_dir) const
 {
 	return get(_cfg.to_string(), _cfg.def, emu_dir);

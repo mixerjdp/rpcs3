@@ -298,6 +298,11 @@ namespace rpcs3::utils
 
 	std::string get_savestates_dir()
 	{
+		if (const std::string libretro_save_directory = get_libretro_save_directory(); !libretro_save_directory.empty())
+		{
+			return libretro_save_directory + "savestates/";
+		}
+
 		return fs::get_config_dir() + "savestates/";
 	}
 

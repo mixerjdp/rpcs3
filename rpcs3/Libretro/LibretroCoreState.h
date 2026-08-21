@@ -50,7 +50,8 @@ private:
 	void update_rumble();
 	void submit_audio();
 	void update_progress_overlay(bool frame_received);
-	std::string get_data_directory() const;
+	std::string get_system_directory() const;
+	std::string get_save_directory() const;
 
 	retro_environment_t m_environment = nullptr;
 	retro_video_refresh_t m_video_refresh = nullptr;

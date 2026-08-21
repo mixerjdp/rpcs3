@@ -439,7 +439,7 @@ void Emulator::Init()
 
 	jit_runtime::initialize();
 
-	const std::string emu_dir = rpcs3::utils::get_emu_dir();
+	std::string emu_dir = rpcs3::utils::get_emu_dir();
 	auto make_path_verbose = [&](const std::string& path, bool must_exist_outside_emu_dir)
 	{
 		if (fs::is_dir(path))
@@ -521,7 +521,9 @@ void Emulator::Init()
 
 	// Load VFS config
 	g_cfg_vfs.load();
+	apply_libretro_vfs_paths();
 	sys_log.notice("Using VFS config:\n%s", g_cfg_vfs.to_string());
+	emu_dir = rpcs3::utils::get_emu_dir();
 
 	// Mount all devices
 	const std::string elf_dir = fs::get_parent_dir(m_path);
