@@ -485,6 +485,11 @@ public:
 
 		try
 		{
+			// Libretro cannot rely on RPCS3's process-start static registration:
+			// the frontend may unload this DLL while worker threads still exist.
+			// Register the handlers for the emulation lifetime and remove them in
+			// stop() after all emulator callbacks have drained.
+			thread_ctrl::initialize_exception_handler();
 			Emu.SetHasGui(false);
 			// RPCS3's headless flag intentionally forces the Null renderer. This is
 			// a non-Qt frontend, but it still owns a real hidden render surface.
@@ -526,6 +531,7 @@ public:
 		}
 
 		stop();
+		thread_ctrl::initialize_exception_handler();
 		m_mailbox->clear();
 		Emu.SetForceBoot(true);
 
@@ -577,6 +583,7 @@ public:
 		}
 
 		pump_main_thread_callbacks();
+		thread_ctrl::cleanup_exception_handler();
 	}
 
 	bool restart(std::string& error)

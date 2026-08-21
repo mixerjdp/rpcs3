@@ -9,6 +9,7 @@
 #include "Thread.h"
 #include "Utilities/JIT.h"
 #include <cfenv>
+#include <mutex>
 
 #ifdef ARCH_ARM64
 #include "Emu/CPU/Backends/AArch64/AArch64Signal.h"
@@ -2306,9 +2307,27 @@ static void append_thread_name(std::string& msg)
 static PVOID s_vectored_exception_handler = nullptr;
 static LPTOP_LEVEL_EXCEPTION_FILTER s_previous_exception_filter = nullptr;
 static bool s_exception_filter_installed = false;
+static std::mutex s_exception_handler_mutex;
+static std::atomic<u32> s_exception_callbacks_active{0};
+static std::atomic<u32> s_exception_recoveries_logged{0};
+
+struct exception_callback_scope final
+{
+	exception_callback_scope()
+	{
+		s_exception_callbacks_active.fetch_add(1, std::memory_order_acquire);
+	}
+
+	~exception_callback_scope()
+	{
+		s_exception_callbacks_active.fetch_sub(1, std::memory_order_release);
+	}
+};
 
 static LONG exception_handler(PEXCEPTION_POINTERS pExp) noexcept
 {
+	const exception_callback_scope callback_scope;
+
 	if (pExp->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT)
 	{
 		return EXCEPTION_CONTINUE_SEARCH;
@@ -2346,6 +2365,11 @@ static LONG exception_handler(PEXCEPTION_POINTERS pExp) noexcept
 
 		if (thread_ctrl::get_current() && handle_access_violation(addr, is_writing, is_exec, pExp->ContextRecord))
 		{
+			const u32 recovery_index = s_exception_recoveries_logged.fetch_add(1, std::memory_order_relaxed);
+			if (recovery_index < 16)
+			{
+				sys_log.notice("Recovered guest access violation (addr=0x%x, %s, recovery=%u).", addr, is_writing ? "write" : "read", recovery_index + 1);
+			}
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
 	}
@@ -2377,6 +2401,8 @@ static LONG exception_handler(PEXCEPTION_POINTERS pExp) noexcept
 
 static LONG exception_filter(PEXCEPTION_POINTERS pExp) noexcept
 {
+	const exception_callback_scope callback_scope;
+
 	std::string msg = fmt::format("Unhandled Win32 exception 0x%08X.\n", pExp->ExceptionRecord->ExceptionCode);
 
 	if (pExp->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION)
@@ -2503,8 +2529,15 @@ static LONG exception_filter(PEXCEPTION_POINTERS pExp) noexcept
 	thread_ctrl::emergency_exit(msg);
 }
 
-const bool s_exception_handler_set = []() -> bool
+static bool install_exception_handler() noexcept
 {
+	std::lock_guard lock{s_exception_handler_mutex};
+
+	if (s_vectored_exception_handler || s_exception_filter_installed)
+	{
+		return true;
+	}
+
 #ifdef USE_ASAN
 	s_vectored_exception_handler = AddVectoredExceptionHandler(FALSE, static_cast<PVECTORED_EXCEPTION_HANDLER>(exception_handler));
 #else
@@ -2518,9 +2551,14 @@ const bool s_exception_handler_set = []() -> bool
 	// A null return value is a valid previous-filter value, not an error.
 	s_previous_exception_filter = SetUnhandledExceptionFilter(static_cast<LPTOP_LEVEL_EXCEPTION_FILTER>(exception_filter));
 	s_exception_filter_installed = true;
+	s_exception_recoveries_logged.store(0, std::memory_order_relaxed);
 
 	return true;
-}();
+}
+
+#if !defined(RPCS3_LIBRETRO)
+const bool s_exception_handler_set = install_exception_handler();
+#endif
 
 #else
 
@@ -2687,6 +2725,7 @@ void sigpipe_signaling_handler(int)
 {
 }
 
+#if !defined(RPCS3_LIBRETRO)
 const bool s_exception_handler_set = []() -> bool
 {
 	struct ::sigaction sa;
@@ -2725,21 +2764,53 @@ const bool s_exception_handler_set = []() -> bool
 	std::printf("Debugger: %d\n", +IsDebuggerPresent());
 	return true;
 }();
+#endif
 
 #endif
+
+void thread_ctrl::initialize_exception_handler() noexcept
+{
+#ifdef _WIN32
+	if (install_exception_handler())
+	{
+		sys_log.notice("RPCS3 exception handlers installed for the active emulation lifetime.");
+	}
+#endif
+}
 
 void thread_ctrl::cleanup_exception_handler() noexcept
 {
 #ifdef _WIN32
-	if (s_vectored_exception_handler)
+	bool removed = false;
 	{
-		RemoveVectoredExceptionHandler(std::exchange(s_vectored_exception_handler, nullptr));
+		std::lock_guard lock{s_exception_handler_mutex};
+
+		if (s_vectored_exception_handler)
+		{
+			RemoveVectoredExceptionHandler(std::exchange(s_vectored_exception_handler, nullptr));
+			removed = true;
+		}
+
+		if (std::exchange(s_exception_filter_installed, false))
+		{
+			SetUnhandledExceptionFilter(s_previous_exception_filter);
+			s_previous_exception_filter = nullptr;
+			removed = true;
+		}
 	}
 
-	if (std::exchange(s_exception_filter_installed, false))
+	if (removed)
 	{
-		SetUnhandledExceptionFilter(s_previous_exception_filter);
-		s_previous_exception_filter = nullptr;
+		sys_log.notice("RPCS3 exception handlers removed; waiting for active callbacks.");
+	}
+
+	// A vectored or top-level callback may already be executing on another
+	// thread when the frontend asks the core to unload.  Do not return from the
+	// DLL while that callback can still execute code from the soon-to-be-unloaded
+	// image.
+	while (s_exception_callbacks_active.load(std::memory_order_acquire) != 0)
+	{
+		std::this_thread::yield();
 	}
 #endif
 }

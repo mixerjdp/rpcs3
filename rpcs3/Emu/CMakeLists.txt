@@ -21,6 +21,14 @@ add_library(rpcs3_emu STATIC
     IPC_socket.cpp
 )
 
+# A libretro core is loaded and unloaded by a long-lived frontend.  Keep the
+# static process-start registration disabled in that configuration; the
+# libretro bridge explicitly installs and removes the hooks around emulation so
+# they cannot retain function pointers into rpcs3_libretro.dll after unload.
+if(BUILD_LIBRETRO AND NOT BUILD_RPCS3_GUI)
+    target_compile_definitions(rpcs3_emu PRIVATE RPCS3_LIBRETRO=1)
+endif()
+
 if(USE_LTO)
     set_target_properties(rpcs3_emu PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
 endif()

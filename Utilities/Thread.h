@@ -331,6 +331,12 @@ public:
 	// hosted RPCS3 image. Standalone builds normally keep these until exit.
 	static void cleanup_exception_handler() noexcept;
 
+	// Install the process-wide exception hooks for a dynamically hosted RPCS3
+	// image. Libretro uses an explicit install/cleanup lifetime so guest memory
+	// faults can still be recovered while a game is running without leaving a
+	// callback into the DLL after the frontend unloads it.
+	static void initialize_exception_handler() noexcept;
+
 	// Returns a core affinity mask. Set whether to generate the high priority set or not
 	static u64 get_affinity_mask(thread_class group);
 
