@@ -109,6 +109,11 @@ constexpr std::array<retro_input_descriptor, 17> input_descriptors{{
 	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start"},
 	{0, 0, 0, 0, nullptr},
 }};
+
+constexpr std::array<retro_variable, 2> core_options{{
+	{"rpcs3_resolution_scale", "Resolution Scale; 100%|150%|200%|300%"},
+	{nullptr, nullptr},
+}};
 } // namespace
 
 core_state::core_state() = default;
@@ -171,7 +176,32 @@ void core_state::register_frontend_capabilities()
 
 	m_environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS,
 		const_cast<retro_input_descriptor*>(input_descriptors.data()));
+	m_environment(RETRO_ENVIRONMENT_SET_VARIABLES,
+		const_cast<retro_variable*>(core_options.data()));
 	m_environment(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE, &m_rumble);
+}
+
+unsigned core_state::get_resolution_scale_percent() const
+{
+	retro_variable variable{"rpcs3_resolution_scale", nullptr};
+	if (m_environment && m_environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) && variable.value)
+	{
+		const std::string_view setting(variable.value);
+		if (setting == "150%")
+		{
+			return 150;
+		}
+		if (setting == "200%")
+		{
+			return 200;
+		}
+		if (setting == "300%")
+		{
+			return 300;
+		}
+	}
+
+	return 100;
 }
 
 void core_state::init()
@@ -334,6 +364,7 @@ bool core_state::load_game(const retro_game_info* game)
 	}
 
 	std::string error;
+	m_emulator->set_resolution_scale(get_resolution_scale_percent());
 	show_message("RPCS3: preparing PPU/SPU caches...", 600);
 	if (!m_emulator->boot(game->path, error))
 	{

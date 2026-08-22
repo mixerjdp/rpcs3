@@ -534,6 +534,7 @@ public:
 		thread_ctrl::initialize_exception_handler();
 		m_mailbox->clear();
 		Emu.SetForceBoot(true);
+		g_cfg.video.resolution_scale_percent.set(m_resolution_scale_percent);
 
 		try
 		{
@@ -544,6 +545,12 @@ public:
 					std::to_string(static_cast<u32>(result)) + ").";
 				return false;
 			}
+
+			// A title-specific RPCS3 configuration may be applied during BootGame.
+			// Re-apply the libretro option so the frontend's explicit choice wins
+			// for this core session. VKPresent synchronizes the change on the next
+			// flip.
+			g_cfg.video.resolution_scale_percent.set(m_resolution_scale_percent);
 		}
 		catch (const std::exception& exception)
 		{
@@ -557,6 +564,15 @@ public:
 		}
 
 		return true;
+	}
+
+	void set_resolution_scale(unsigned percent)
+	{
+		m_resolution_scale_percent = std::clamp(percent, 25u, 800u);
+		if (m_initialized)
+		{
+			g_cfg.video.resolution_scale_percent.set(m_resolution_scale_percent);
+		}
 	}
 
 	void stop()
@@ -594,6 +610,7 @@ public:
 			return false;
 		}
 
+		g_cfg.video.resolution_scale_percent.set(m_resolution_scale_percent);
 		const game_boot_result result = Emu.Restart(false, true);
 		if (result != game_boot_result::no_errors)
 		{
@@ -601,6 +618,8 @@ public:
 				std::to_string(static_cast<u32>(result)) + ").";
 			return false;
 		}
+
+		g_cfg.video.resolution_scale_percent.set(m_resolution_scale_percent);
 
 		return true;
 	}
@@ -805,6 +824,7 @@ private:
 	}
 
 	bool m_initialized = false;
+	unsigned m_resolution_scale_percent = 100;
 	std::shared_ptr<frame_mailbox> m_mailbox;
 	std::shared_ptr<libretro_audio_backend> m_audio_backend;
 	std::thread::id m_main_thread_id;
@@ -825,6 +845,11 @@ emulator_bridge::~emulator_bridge() = default;
 bool emulator_bridge::initialize(const std::string& system_directory, const std::string& save_directory, std::string& error)
 {
 	return m_impl->initialize(system_directory, save_directory, error);
+}
+
+void emulator_bridge::set_resolution_scale(unsigned percent)
+{
+	m_impl->set_resolution_scale(percent);
 }
 
 bool emulator_bridge::boot(const std::string& content_path, std::string& error)

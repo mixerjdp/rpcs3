@@ -50,6 +50,7 @@ private:
 	void update_rumble();
 	void submit_audio();
 	void update_progress_overlay(bool frame_received);
+	unsigned get_resolution_scale_percent() const;
 	std::string get_system_directory() const;
 	std::string get_save_directory() const;
 

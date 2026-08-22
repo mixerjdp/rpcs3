@@ -45,6 +45,14 @@ RPCS3 configuration/VFS data. On Windows the core also recognizes this layout
 during DLL initialization, before the libretro environment callback is
 available.
 
+### Core options
+
+RetroArch exposes an `RPCS3 Resolution Scale` option with 100%, 150%, 200% and
+300% values. The option controls RPCS3's internal rendering resolution and is
+applied when the next content is loaded. It is independent of RetroArch's
+window/output scaling. Higher values require substantially more VRAM and CPU
+readback bandwidth with the current experimental video bridge.
+
 ## Milestone boundaries
 
 Implemented:
