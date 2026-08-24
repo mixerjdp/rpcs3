@@ -431,15 +431,32 @@ void VKGSRender::poll_libretro_frame_capture()
 
 	try
 	{
-		// Do not wait here. The command buffer belongs to the previous flip and
-		// may still be in flight while the emulator is preparing this one.
+		// Never wait on the frontend/RSX flip thread. The command buffer is also
+		// owned by the normal frame-context lifecycle, which waits for its fence
+		// before recycling it. A non-blocking poll here lets us consume the buffer
+		// as soon as it is complete and retry on a later flip otherwise.
 		if (!m_libretro_capture_command_buffer->poke())
 		{
 			return;
 		}
 
 		const usz capture_size = m_libretro_capture_size;
+		if (!capture_size || !m_libretro_capture_width || !m_libretro_capture_height ||
+			capture_size != static_cast<usz>(m_libretro_capture_width) * m_libretro_capture_height * 4)
+		{
+			rsx_log.error("Libretro frame capture returned invalid Vulkan image metadata");
+			m_libretro_capture_command_buffer = nullptr;
+			return;
+		}
+
 		const auto src = static_cast<const u8*>(m_libretro_capture_buffer->map(0, capture_size));
+		if (!src)
+		{
+			rsx_log.error("Libretro frame capture returned an unmappable Vulkan buffer");
+			m_libretro_capture_command_buffer = nullptr;
+			return;
+		}
+
 		std::vector<u8> frame(capture_size);
 		std::memcpy(frame.data(), src, capture_size);
 		m_libretro_capture_buffer->unmap();
@@ -454,14 +471,12 @@ void VKGSRender::poll_libretro_frame_capture()
 	catch (const std::exception& exception)
 	{
 		m_libretro_capture_command_buffer = nullptr;
-		m_libretro_capture_disabled = true;
-		rsx_log.error("Libretro frame capture disabled after a Vulkan readback error: %s", exception.what());
+		rsx_log.error("Libretro frame capture will retry after a Vulkan readback error: %s", exception.what());
 	}
 	catch (...)
 	{
 		m_libretro_capture_command_buffer = nullptr;
-		m_libretro_capture_disabled = true;
-		rsx_log.error("Libretro frame capture disabled after an unknown Vulkan readback error");
+		rsx_log.error("Libretro frame capture will retry after an unknown Vulkan readback error");
 	}
 }
 
@@ -474,7 +489,17 @@ void VKGSRender::queue_libretro_frame_capture(vk::viewable_image* image, u32 wid
 
 	try
 	{
-		const usz capture_size = static_cast<usz>(width) * height * 4;
+		// A video surface can be smaller than the display buffer while the AV
+		// configuration is transitioning. Never issue a copy outside the actual
+		// Vulkan image; the next flip will retry with the new dimensions.
+		const u32 capture_width = std::min(width, image->width());
+		const u32 capture_height = std::min(height, image->height());
+		if (!capture_width || !capture_height)
+		{
+			return;
+		}
+
+		const usz capture_size = static_cast<usz>(capture_width) * capture_height * 4;
 		if (!m_libretro_capture_buffer || m_libretro_capture_buffer->size() < capture_size)
 		{
 			m_libretro_capture_buffer = std::make_unique<vk::buffer>(
@@ -486,36 +511,32 @@ void VKGSRender::queue_libretro_frame_capture(vk::viewable_image* image, u32 wid
 		VkBufferImageCopy copy_info{};
 		copy_info.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		copy_info.imageSubresource.layerCount = 1;
-		copy_info.imageExtent = { width, height, 1 };
+		copy_info.imageExtent = { capture_width, capture_height, 1 };
 
 		image->push_layout(*m_current_command_buffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 		vk::copy_image_to_buffer(*m_current_command_buffer, image, m_libretro_capture_buffer.get(), copy_info);
 		image->pop_layout(*m_current_command_buffer);
 
 		m_libretro_capture_size = capture_size;
-		m_libretro_capture_width = width;
-		m_libretro_capture_height = height;
+		m_libretro_capture_width = capture_width;
+		m_libretro_capture_height = capture_height;
 		m_libretro_capture_is_bgra = image->format() == VK_FORMAT_B8G8R8A8_UNORM;
 		m_libretro_capture_command_buffer = m_current_command_buffer;
 	}
 	catch (const std::exception& exception)
 	{
 		m_libretro_capture_command_buffer = nullptr;
-		m_libretro_capture_disabled = true;
-		rsx_log.error("Libretro frame capture disabled after a Vulkan readback setup error: %s", exception.what());
+		rsx_log.error("Libretro frame capture will retry after a Vulkan readback setup error: %s", exception.what());
 	}
 	catch (...)
 	{
 		m_libretro_capture_command_buffer = nullptr;
-		m_libretro_capture_disabled = true;
-		rsx_log.error("Libretro frame capture disabled after an unknown Vulkan readback setup error");
+		rsx_log.error("Libretro frame capture will retry after an unknown Vulkan readback setup error");
 	}
 }
 
 void VKGSRender::flip(const rsx::display_flip_info_t& info)
 {
-	poll_libretro_frame_capture();
-
 	// Check swapchain condition/status
 	if (!m_swapchain->supports_automatic_wm_reports())
 	{
@@ -582,6 +603,11 @@ void VKGSRender::flip(const rsx::display_flip_info_t& info)
 		// There were no draws and back-to-back flips happened
 		frame_context_cleanup(m_current_frame);
 	}
+
+	// Poll only after the normal frame-context housekeeping. If that frame was
+	// recycled, its fence has already been waited on; otherwise this remains a
+	// non-blocking probe and the next flip retries it.
+	poll_libretro_frame_capture();
 
 	if (info.skip_frame || swapchain_unavailable)
 	{

@@ -318,15 +318,17 @@ class libretro_gs_frame final : public GSFrameBase
 {
 public:
 #ifdef _WIN32
-	libretro_gs_frame(std::shared_ptr<frame_mailbox> mailbox, HWND window)
+	libretro_gs_frame(std::shared_ptr<frame_mailbox> mailbox, std::shared_ptr<std::atomic<bool>> readback_gate, HWND window)
 		: m_mailbox(std::move(mailbox))
+		, m_readback_gate(std::move(readback_gate))
 		, m_window(window)
 	{
 		m_frame_readback_enabled = !libretro_frame_readback_disabled();
 	}
 #else
-	explicit libretro_gs_frame(std::shared_ptr<frame_mailbox> mailbox)
+	explicit libretro_gs_frame(std::shared_ptr<frame_mailbox> mailbox, std::shared_ptr<std::atomic<bool>> readback_gate)
 		: m_mailbox(std::move(mailbox))
+		, m_readback_gate(std::move(readback_gate))
 	{
 		m_frame_readback_enabled = !libretro_frame_readback_disabled();
 	}
@@ -358,7 +360,7 @@ public:
 
 	bool can_consume_frame() const override
 	{
-		return m_open && m_frame_readback_enabled;
+		return m_open && m_frame_readback_enabled && (!m_readback_gate || m_readback_gate->load());
 	}
 
 	void present_frame(std::vector<u8>&& data, u32 pitch, u32 width, u32 height, bool is_bgra) const override
@@ -375,6 +377,7 @@ public:
 
 private:
 	std::shared_ptr<frame_mailbox> m_mailbox;
+	std::shared_ptr<std::atomic<bool>> m_readback_gate;
 	std::atomic<bool> m_open{true};
 	bool m_frame_readback_enabled = true;
 #ifdef _WIN32
@@ -531,6 +534,7 @@ public:
 		}
 
 		stop();
+		m_readback_gate->store(true);
 		thread_ctrl::initialize_exception_handler();
 		m_mailbox->clear();
 		Emu.SetForceBoot(true);
@@ -581,6 +585,10 @@ public:
 		{
 			return;
 		}
+
+		// Prevent a new Vulkan readback from being queued while the RSX renderer
+		// and its command buffers are being stopped for close-content.
+		m_readback_gate->store(false);
 
 		if (!Emu.IsStopped(true))
 		{
@@ -763,9 +771,9 @@ private:
 		callbacks.get_gs_frame = [this]() -> std::unique_ptr<GSFrameBase>
 		{
 #ifdef _WIN32
-			return std::make_unique<libretro_gs_frame>(m_mailbox, m_window.handle());
+			return std::make_unique<libretro_gs_frame>(m_mailbox, m_readback_gate, m_window.handle());
 #else
-			return std::make_unique<libretro_gs_frame>(m_mailbox);
+			return std::make_unique<libretro_gs_frame>(m_mailbox, m_readback_gate);
 #endif
 		};
 		callbacks.init_gs_render = [](utils::serial* archive)
@@ -827,6 +835,7 @@ private:
 	unsigned m_resolution_scale_percent = 100;
 	std::shared_ptr<frame_mailbox> m_mailbox;
 	std::shared_ptr<libretro_audio_backend> m_audio_backend;
+	std::shared_ptr<std::atomic<bool>> m_readback_gate = std::make_shared<std::atomic<bool>>(true);
 	std::thread::id m_main_thread_id;
 	std::mutex m_main_thread_mutex;
 	std::deque<pending_main_thread_call> m_main_thread_calls;
