@@ -180,21 +180,22 @@ pad_thread::~pad_thread()
 void pad_thread::Init()
 {
 	std::lock_guard lock(pad::g_pad_mutex);
-	m_info = {1, 0, false};
+	m_info = {rpcs3::libretro::max_libretro_players, 0, false};
 	m_handlers.clear();
 	m_handlers.emplace(pad_handler::null, std::make_shared<NullPadHandler>());
 
 	for (u32 index = 0; index < CELL_PAD_MAX_PORT_NUM; ++index)
 	{
+		const bool libretro_pad = index < rpcs3::libretro::max_libretro_players;
 		m_pads[index] = std::make_shared<Pad>(
 			pad_handler::null,
 			index,
-			index == 0 ? CELL_PAD_STATUS_CONNECTED | CELL_PAD_STATUS_ASSIGN_CHANGES : CELL_PAD_STATUS_DISCONNECTED,
+			libretro_pad ? CELL_PAD_STATUS_CONNECTED | CELL_PAD_STATUS_ASSIGN_CHANGES : CELL_PAD_STATUS_DISCONNECTED,
 			CELL_PAD_CAPABILITY_PS3_CONFORMITY | CELL_PAD_CAPABILITY_PRESS_MODE | CELL_PAD_CAPABILITY_ACTUATOR,
 			CELL_PAD_DEV_TYPE_STANDARD);
-		m_pads_connected[index] = index == 0;
+		m_pads_connected[index] = libretro_pad;
 
-		if (index == 0)
+		if (libretro_pad)
 		{
 			initialize_standard_pad(m_pads[index], true);
 		}
@@ -272,10 +273,11 @@ void pad_thread::InitPadConfig(cfg_pad& cfg, pad_handler, std::shared_ptr<PadHan
 
 namespace rpcs3::libretro
 {
-bool update_pad_state(const pad_state& state)
+bool update_pad_state(unsigned port, const pad_state& state)
 {
 	bool connection_changed = false;
 	u32 connection_status = CELL_PAD_STATUS_DISCONNECTED;
+	unsigned connected_count = 0;
 
 	{
 		std::lock_guard lock(pad::g_pad_mutex);
@@ -286,12 +288,12 @@ bool update_pad_state(const pad_state& state)
 		}
 
 		auto& pads = thread->GetPads();
-		if (!pads[0])
+		if (port >= max_libretro_players || !pads[port])
 		{
 			return false;
 		}
 
-		const auto& target = pads[0];
+		const auto& target = pads[port];
 		const bool was_connected = target->is_connected();
 		if (state.connected)
 		{
@@ -308,7 +310,6 @@ bool update_pad_state(const pad_state& state)
 		{
 			target->m_port_status |= CELL_PAD_STATUS_ASSIGN_CHANGES;
 			target->m_buffer_cleared = true;
-			thread->GetInfo().now_connect = state.connected ? 1 : 0;
 		}
 
 		for (usz index = 0; index < target->m_buttons.size(); ++index)
@@ -335,11 +336,20 @@ bool update_pad_state(const pad_state& state)
 			target->m_sticks[index].m_value = axes[index];
 			target->m_sticks_external[index].m_value = axes[index];
 		}
+
+		for (unsigned index = 0; index < max_libretro_players; ++index)
+		{
+			if (pads[index] && pads[index]->is_connected())
+			{
+				++connected_count;
+			}
+		}
+		thread->GetInfo().now_connect = connected_count;
 	}
 
 	if (connection_changed)
 	{
-		::pad_state_notify_state_change(0, connection_status);
+		::pad_state_notify_state_change(port, connection_status);
 	}
 
 	return true;

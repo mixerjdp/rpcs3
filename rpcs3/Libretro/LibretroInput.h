@@ -4,6 +4,12 @@
 
 namespace rpcs3::libretro
 {
+// RetroArch exposes controller ports independently.  The PS3 itself can
+// expose seven pad ports, but the first four are the portable libretro
+// baseline used by this core and cover the multiplayer layouts of the games
+// we target here.
+inline constexpr unsigned max_libretro_players = 4;
+
 struct pad_state
 {
 	bool connected = true;
@@ -30,9 +36,9 @@ struct pad_state
 };
 
 // Called from the frontend thread once per retro_run(). The adapter copies the
-// snapshot into RPCS3's cellPad representation while holding g_pad_mutex.
-// Returns true when port 1 exists and received the snapshot.
-bool update_pad_state(const pad_state& state);
+// snapshot into the requested RPCS3 cellPad port while holding g_pad_mutex.
+// Returns true when the requested port exists and received the snapshot.
+bool update_pad_state(unsigned port, const pad_state& state);
 
 // RPCS3 can request rumble from its emulation threads. The libretro frontend
 // consumes the pending values on the retro_run() thread, where frontend

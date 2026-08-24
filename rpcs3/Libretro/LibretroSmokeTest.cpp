@@ -1,6 +1,9 @@
+#include "LibretroInput.h"
+
 #include <libretro.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -21,6 +24,7 @@ std::size_t g_nonzero_audio_samples = 0;
 unsigned g_test_frame = 0;
 bool g_received_message = false;
 bool g_received_input_descriptors = false;
+std::array<unsigned, rpcs3::libretro::max_libretro_players> g_input_descriptor_counts{};
 std::string g_last_message;
 unsigned g_message_updates = 0;
 const char* g_system_directory = ".";
@@ -63,6 +67,18 @@ bool RETRO_CALLCONV environment(unsigned command, void* data)
 		return false;
 	case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
 		g_received_input_descriptors = data != nullptr;
+		g_input_descriptor_counts.fill(0);
+		if (g_received_input_descriptors)
+		{
+			const auto* descriptors = static_cast<const retro_input_descriptor*>(data);
+			for (; descriptors->description; ++descriptors)
+			{
+				if (descriptors->port < g_input_descriptor_counts.size())
+				{
+					++g_input_descriptor_counts[descriptors->port];
+				}
+			}
+		}
 		return g_received_input_descriptors;
 	case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
 		return data && *static_cast<retro_pixel_format*>(data) == RETRO_PIXEL_FORMAT_XRGB8888;
@@ -202,6 +218,12 @@ int main(int argc, char** argv)
 	retro_init();
 
 	passed &= check(g_received_input_descriptors, "input descriptors were not registered");
+	for (unsigned port = 0; port < rpcs3::libretro::max_libretro_players; ++port)
+	{
+		passed &= check(g_input_descriptor_counts[port] == 16,
+			"each of the four controller ports must expose the complete RetroPad mapping");
+		retro_set_controller_port_device(port, RETRO_DEVICE_JOYPAD);
+	}
 
 	if (integration_test)
 	{

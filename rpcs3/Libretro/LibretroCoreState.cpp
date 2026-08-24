@@ -5,6 +5,7 @@
 #include "Emu/system_progress.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <span>
@@ -90,25 +91,37 @@ void draw_progress_bar(std::vector<std::uint32_t>& framebuffer, unsigned width, 
 	}
 }
 
-constexpr std::array<retro_input_descriptor, 17> input_descriptors{{
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "Cross"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "Circle"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Square"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Triangle"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L1"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R1"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "L2"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "R2"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "L3"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "R3"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select"},
-	{0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start"},
-	{0, 0, 0, 0, nullptr},
-}};
+constexpr std::array<retro_input_descriptor, max_libretro_players * 16 + 1> input_descriptors = []
+{
+	std::array<retro_input_descriptor, max_libretro_players * 16 + 1> descriptors{};
+	std::size_t index = 0;
+	const auto add_player_descriptors = [&descriptors, &index](unsigned port)
+	{
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "D-Pad Up"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "D-Pad Down"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "D-Pad Left"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B, "Cross"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "Circle"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Square"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Triangle"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "L1"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "R1"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "L2"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "R2"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3, "L3"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3, "R3"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select"};
+		descriptors[index++] = {port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Start"};
+	};
+
+	for (unsigned port = 0; port < max_libretro_players; ++port)
+	{
+		add_player_descriptors(port);
+	}
+
+	return descriptors;
+}();
 
 constexpr std::array<retro_variable, 3> core_options{{
 	{"rpcs3_resolution_scale", "Resolution Scale; 100%|150%|200%|300%"},
@@ -117,7 +130,10 @@ constexpr std::array<retro_variable, 3> core_options{{
 }};
 } // namespace
 
-core_state::core_state() = default;
+core_state::core_state()
+{
+	m_controller_devices.fill(RETRO_DEVICE_JOYPAD);
+}
 core_state::~core_state() = default;
 
 core_state& get_core_state()
@@ -276,8 +292,11 @@ void core_state::deinit()
 	unload_game();
 	if (m_rumble.set_rumble_state)
 	{
-		m_rumble.set_rumble_state(0, RETRO_RUMBLE_STRONG, 0);
-		m_rumble.set_rumble_state(0, RETRO_RUMBLE_WEAK, 0);
+		for (unsigned port = 0; port < max_libretro_players; ++port)
+		{
+			m_rumble.set_rumble_state(port, RETRO_RUMBLE_STRONG, 0);
+			m_rumble.set_rumble_state(port, RETRO_RUMBLE_WEAK, 0);
+		}
 	}
 	m_emulator.reset();
 	m_framebuffer.clear();
@@ -426,7 +445,7 @@ bool core_state::load_game(const retro_game_info* game)
 
 	m_content_loaded = true;
 	m_frame_counter = 0;
-	m_input_activity_logged = false;
+	m_input_activity_logged.fill(false);
 	m_audio_stream_logged = false;
 	m_audio_activity_logged = false;
 	m_audio_diagnostic_logged = false;
@@ -459,15 +478,18 @@ void core_state::unload_game()
 	m_progress_base_framebuffer.clear();
 	if (m_rumble.set_rumble_state)
 	{
-		m_rumble.set_rumble_state(0, RETRO_RUMBLE_STRONG, 0);
-		m_rumble.set_rumble_state(0, RETRO_RUMBLE_WEAK, 0);
+		for (unsigned port = 0; port < max_libretro_players; ++port)
+		{
+			m_rumble.set_rumble_state(port, RETRO_RUMBLE_STRONG, 0);
+			m_rumble.set_rumble_state(port, RETRO_RUMBLE_WEAK, 0);
+		}
 	}
 	log(RETRO_LOG_INFO, "RPCS3 content unloaded.");
 }
 
 void core_state::set_controller_port_device(unsigned port, unsigned device)
 {
-	if (port != 0)
+	if (port >= max_libretro_players)
 	{
 		return;
 	}
@@ -475,63 +497,68 @@ void core_state::set_controller_port_device(unsigned port, unsigned device)
 	const unsigned base_device = device & RETRO_DEVICE_MASK;
 	if (base_device == RETRO_DEVICE_NONE || base_device == RETRO_DEVICE_JOYPAD || base_device == RETRO_DEVICE_ANALOG)
 	{
-		m_controller_device = base_device;
+		m_controller_devices[port] = base_device;
 		return;
 	}
 
-	m_controller_device = RETRO_DEVICE_NONE;
-	log(RETRO_LOG_WARN, "Unsupported controller type on port 1; the PS3 pad was disconnected.");
+	m_controller_devices[port] = RETRO_DEVICE_NONE;
+	const std::string message = "Unsupported controller type on port " + std::to_string(port + 1) + "; the PS3 pad was disconnected.";
+	log(RETRO_LOG_WARN, message.c_str());
 }
 
 void core_state::update_input()
 {
-	pad_state state{};
-	state.connected = m_controller_device != RETRO_DEVICE_NONE;
-
-	if (state.connected && m_input_state)
+	for (unsigned port = 0; port < max_libretro_players; ++port)
 	{
-		const auto pressed = [this](unsigned id)
+		pad_state state{};
+		state.connected = m_controller_devices[port] != RETRO_DEVICE_NONE;
+
+		if (state.connected && m_input_state)
 		{
-			return m_input_state(0, RETRO_DEVICE_JOYPAD, 0, id) != 0;
-		};
+			const auto pressed = [this, port](unsigned id)
+			{
+				return m_input_state(port, RETRO_DEVICE_JOYPAD, 0, id) != 0;
+			};
 
-		state.up = pressed(RETRO_DEVICE_ID_JOYPAD_UP);
-		state.down = pressed(RETRO_DEVICE_ID_JOYPAD_DOWN);
-		state.left = pressed(RETRO_DEVICE_ID_JOYPAD_LEFT);
-		state.right = pressed(RETRO_DEVICE_ID_JOYPAD_RIGHT);
-		state.cross = pressed(RETRO_DEVICE_ID_JOYPAD_B);
-		state.circle = pressed(RETRO_DEVICE_ID_JOYPAD_A);
-		state.square = pressed(RETRO_DEVICE_ID_JOYPAD_Y);
-		state.triangle = pressed(RETRO_DEVICE_ID_JOYPAD_X);
-		state.l1 = pressed(RETRO_DEVICE_ID_JOYPAD_L);
-		state.r1 = pressed(RETRO_DEVICE_ID_JOYPAD_R);
-		state.l2 = pressed(RETRO_DEVICE_ID_JOYPAD_L2);
-		state.r2 = pressed(RETRO_DEVICE_ID_JOYPAD_R2);
-		state.l3 = pressed(RETRO_DEVICE_ID_JOYPAD_L3);
-		state.r3 = pressed(RETRO_DEVICE_ID_JOYPAD_R3);
-		state.select = pressed(RETRO_DEVICE_ID_JOYPAD_SELECT);
-		state.start = pressed(RETRO_DEVICE_ID_JOYPAD_START);
-		state.left_x = m_input_state(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
-		state.left_y = m_input_state(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
-		state.right_x = m_input_state(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
-		state.right_y = m_input_state(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
-	}
+			state.up = pressed(RETRO_DEVICE_ID_JOYPAD_UP);
+			state.down = pressed(RETRO_DEVICE_ID_JOYPAD_DOWN);
+			state.left = pressed(RETRO_DEVICE_ID_JOYPAD_LEFT);
+			state.right = pressed(RETRO_DEVICE_ID_JOYPAD_RIGHT);
+			state.cross = pressed(RETRO_DEVICE_ID_JOYPAD_B);
+			state.circle = pressed(RETRO_DEVICE_ID_JOYPAD_A);
+			state.square = pressed(RETRO_DEVICE_ID_JOYPAD_Y);
+			state.triangle = pressed(RETRO_DEVICE_ID_JOYPAD_X);
+			state.l1 = pressed(RETRO_DEVICE_ID_JOYPAD_L);
+			state.r1 = pressed(RETRO_DEVICE_ID_JOYPAD_R);
+			state.l2 = pressed(RETRO_DEVICE_ID_JOYPAD_L2);
+			state.r2 = pressed(RETRO_DEVICE_ID_JOYPAD_R2);
+			state.l3 = pressed(RETRO_DEVICE_ID_JOYPAD_L3);
+			state.r3 = pressed(RETRO_DEVICE_ID_JOYPAD_R3);
+			state.select = pressed(RETRO_DEVICE_ID_JOYPAD_SELECT);
+			state.start = pressed(RETRO_DEVICE_ID_JOYPAD_START);
+			state.left_x = m_input_state(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+			state.left_y = m_input_state(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+			state.right_x = m_input_state(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
+			state.right_y = m_input_state(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y);
+		}
 
-	const bool pad_updated = update_pad_state(state);
+		const bool pad_updated = update_pad_state(port, state);
 
-	const bool button_activity = state.up || state.down || state.left || state.right ||
-		state.cross || state.circle || state.square || state.triangle ||
-		state.l1 || state.r1 || state.l2 || state.r2 || state.l3 || state.r3 ||
-		state.select || state.start;
-	const bool analog_activity = std::abs(static_cast<int>(state.left_x)) > 2048 ||
-		std::abs(static_cast<int>(state.left_y)) > 2048 ||
-		std::abs(static_cast<int>(state.right_x)) > 2048 ||
-		std::abs(static_cast<int>(state.right_y)) > 2048;
+		const bool button_activity = state.up || state.down || state.left || state.right ||
+			state.cross || state.circle || state.square || state.triangle ||
+			state.l1 || state.r1 || state.l2 || state.r2 || state.l3 || state.r3 ||
+			state.select || state.start;
+		const bool analog_activity = std::abs(static_cast<int>(state.left_x)) > 2048 ||
+			std::abs(static_cast<int>(state.left_y)) > 2048 ||
+			std::abs(static_cast<int>(state.right_x)) > 2048 ||
+			std::abs(static_cast<int>(state.right_y)) > 2048;
 
-	if (!m_input_activity_logged && pad_updated && (button_activity || analog_activity))
-	{
-		m_input_activity_logged = true;
-		log(RETRO_LOG_INFO, "RetroPad input activity reached RPCS3 cellPad port 1.");
+		if (!m_input_activity_logged[port] && pad_updated && (button_activity || analog_activity))
+		{
+			m_input_activity_logged[port] = true;
+			const std::string message = "RetroPad input activity reached RPCS3 cellPad port " + std::to_string(port + 1) + ".";
+			log(RETRO_LOG_INFO, message.c_str());
+		}
 	}
 }
 
@@ -542,12 +569,15 @@ void core_state::update_rumble()
 		return;
 	}
 
-	std::uint16_t strong = 0;
-	std::uint16_t weak = 0;
-	if (take_rumble_state(0, strong, weak))
+	for (unsigned port = 0; port < max_libretro_players; ++port)
 	{
-		m_rumble.set_rumble_state(0, RETRO_RUMBLE_STRONG, strong);
-		m_rumble.set_rumble_state(0, RETRO_RUMBLE_WEAK, weak);
+		std::uint16_t strong = 0;
+		std::uint16_t weak = 0;
+		if (take_rumble_state(port, strong, weak))
+		{
+			m_rumble.set_rumble_state(port, RETRO_RUMBLE_STRONG, strong);
+			m_rumble.set_rumble_state(port, RETRO_RUMBLE_WEAK, weak);
+		}
 	}
 }
 

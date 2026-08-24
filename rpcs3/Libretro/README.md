@@ -3,12 +3,13 @@
 This directory contains the incremental libretro frontend for RPCS3. The
 current Windows preview links the real emulator, boots PS3 content, renders it
 with RPCS3's Vulkan backend, supplies XRGB8888 frames, routes 48 kHz stereo
-audio, maps the first RetroPad to a standard PS3 controller and publishes
+audio, maps four RetroPad ports to standard PS3 controllers and publishes
 PPU/SPU compilation progress through RetroArch messages and a video progress
 bar.
 
 This is still an experimental core. The initial CPU video readback is costly,
-only the first controller is mapped and libretro save states are not exposed.
+motion/special peripherals are not exposed and libretro save states are not
+available.
 
 ## Configure and build
 
@@ -75,7 +76,8 @@ Implemented:
 - Hidden Win32 Vulkan render surface.
 - Vulkan/OpenGL presentation capture and XRGB8888 libretro video delivery.
 - RPCS3 audio backend bridged to the libretro 48 kHz stereo batch callback.
-- Player-one RetroPad mapping for digital buttons and both analog sticks.
+- Four-player RetroPad mapping for digital buttons, both analog sticks and
+  per-port rumble.
 - Strong/weak libretro rumble output.
 - PPU/SPU progress stages (`Analyzing`, `Scanning`, `Loading`, `Compiling`,
   `Linking`, `Applying PPU Code` and `Building SPU Cache`) surfaced through
@@ -86,7 +88,8 @@ Implemented:
 
 Next milestone:
 
-- Extend controller support beyond player one and add motion input.
+- Add motion input and special PS3 peripherals (Move, Buzz, instruments and
+  wheels).
 - Replace the initial CPU frame readback path with a shared hardware-rendering
   path where the frontend and RPCS3 renderer can safely interoperate.
 - Broaden per-title option coverage and add more title/regression tests.

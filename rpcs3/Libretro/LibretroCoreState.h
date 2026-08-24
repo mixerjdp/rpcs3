@@ -8,6 +8,8 @@
 
 #include <libretro.h>
 
+#include "LibretroInput.h"
+
 namespace rpcs3::libretro
 {
 class emulator_bridge;
@@ -69,11 +71,11 @@ private:
 	std::array<std::int16_t, audio_frames_per_run * 2> m_audio_buffer{};
 	unsigned m_video_width = video_width;
 	unsigned m_video_height = video_height;
-	unsigned m_controller_device = RETRO_DEVICE_JOYPAD;
+	std::array<unsigned, max_libretro_players> m_controller_devices{};
 	std::uint64_t m_frame_counter = 0;
 	bool m_initialized = false;
 	bool m_content_loaded = false;
-	bool m_input_activity_logged = false;
+	std::array<bool, max_libretro_players> m_input_activity_logged{};
 	bool m_audio_stream_logged = false;
 	bool m_audio_activity_logged = false;
 	bool m_audio_diagnostic_logged = false;
