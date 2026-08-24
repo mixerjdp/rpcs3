@@ -455,6 +455,17 @@ public:
 		}
 
 #ifdef _WIN32
+		// The standalone executable calls WSAStartup during process setup. A
+		// libretro core does not run that entry point, and RetroArch is not
+		// required to initialize Winsock for a core. Without this, a PS3 title
+		// that opens a network socket can get WSAENOTINITIALISED (10093), which
+		// RPCS3 treats as an unexpected host error and terminates the guest PPU
+		// thread. Keep this reference for the whole loaded-core lifetime.
+		if (!initialize_winsock(error))
+		{
+			return false;
+		}
+
 		std::wstring data_directory_w = system_path.wstring();
 		// fs::get_config_dir() treats RPCS3_CONFIG_DIR like an executable path
 		// and keeps everything through its final separator. Preserve the actual
@@ -473,6 +484,7 @@ public:
 
 		if (!m_window.create())
 		{
+			cleanup_winsock();
 			error = "Could not create the hidden Win32 Vulkan surface.";
 			return false;
 		}
@@ -515,6 +527,10 @@ public:
 		{
 			error = "RPCS3 initialization failed with an unknown exception.";
 		}
+
+#ifdef _WIN32
+		cleanup_winsock();
+#endif
 
 		return false;
 	}
@@ -657,6 +673,10 @@ public:
 		}
 		clear_libretro_vfs_paths();
 
+#ifdef _WIN32
+		cleanup_winsock();
+#endif
+
 		// RPCS3 standalone keeps its process-wide exception hooks until process
 		// exit. A libretro core is unloaded with FreeLibrary, so leaving callbacks
 		// into this DLL registered would trap the loader in unloaded code.
@@ -664,6 +684,36 @@ public:
 	}
 
 private:
+#ifdef _WIN32
+	bool initialize_winsock(std::string& error)
+	{
+		if (m_winsock_initialized)
+		{
+			return true;
+		}
+
+		WSADATA wsa_data{};
+		const int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+		if (result != 0)
+		{
+			error = "Could not initialize Winsock for the RPCS3 core (error=" + std::to_string(result) + ").";
+			return false;
+		}
+
+		m_winsock_initialized = true;
+		return true;
+	}
+
+	void cleanup_winsock()
+	{
+		if (m_winsock_initialized)
+		{
+			WSACleanup();
+			m_winsock_initialized = false;
+		}
+	}
+#endif
+
 	struct pending_main_thread_call
 	{
 		std::function<void()> function;
@@ -841,6 +891,7 @@ private:
 	std::deque<pending_main_thread_call> m_main_thread_calls;
 #ifdef _WIN32
 	hidden_render_window m_window;
+	bool m_winsock_initialized = false;
 #endif
 };
 
