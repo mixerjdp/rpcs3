@@ -10,6 +10,7 @@ namespace
 {
 std::string g_libretro_system_directory;
 std::string g_libretro_save_directory;
+std::string g_libretro_dev_hdd0_directory;
 
 std::string ensure_trailing_separator(std::string path)
 {
@@ -25,12 +26,19 @@ void set_libretro_vfs_paths(std::string system_directory, std::string save_direc
 {
 	g_libretro_system_directory = ensure_trailing_separator(std::move(system_directory));
 	g_libretro_save_directory = ensure_trailing_separator(std::move(save_directory));
+	g_libretro_dev_hdd0_directory.clear();
+}
+
+void set_libretro_dev_hdd0_directory(std::string directory)
+{
+	g_libretro_dev_hdd0_directory = ensure_trailing_separator(std::move(directory));
 }
 
 void clear_libretro_vfs_paths()
 {
 	g_libretro_system_directory.clear();
 	g_libretro_save_directory.clear();
+	g_libretro_dev_hdd0_directory.clear();
 }
 
 bool is_libretro_vfs_active()
@@ -50,11 +58,12 @@ void apply_libretro_vfs_paths()
 		return;
 	}
 
-	// dev_hdd0 contains PS3 savedata, trophies, licenses and installed data;
-	// keep it in the frontend's save root. RPCS3's working trees and caches stay
-	// under system/<core>.
+	// Libretro selects the complete /dev_hdd0 root before each game boots.
+	// The default is the frontend system root; the core can remount it to the
+	// frontend save root for a per-content override.
 	g_cfg_vfs.emulator_dir.set(g_libretro_system_directory);
-	g_cfg_vfs.dev_hdd0.set(g_libretro_save_directory + "dev_hdd0/");
+	g_cfg_vfs.dev_hdd0.set(g_libretro_dev_hdd0_directory.empty() ?
+		g_libretro_system_directory + "dev_hdd0/" : g_libretro_dev_hdd0_directory);
 	g_cfg_vfs.dev_hdd1.set(g_libretro_system_directory + "dev_hdd1/");
 	g_cfg_vfs.dev_flash.set(g_libretro_system_directory + "dev_flash/");
 	g_cfg_vfs.dev_flash2.set(g_libretro_system_directory + "dev_flash2/");

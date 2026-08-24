@@ -53,6 +53,15 @@ applied when the next content is loaded. It is independent of RetroArch's
 window/output scaling. Higher values require substantially more VRAM and CPU
 readback bandwidth with the current experimental video bridge.
 
+RetroArch also exposes `RPCS3 Dev HDD0 Location`, whose default is `System`.
+This option selects the complete RPCS3 `/dev_hdd0` tree (installed game data,
+savedata, trophies, licenses and caches) below either
+`<system>/rpcs3/dev_hdd0` or the core-specific directory supplied by the
+frontend under `<saves>` (for example, `<saves>/RPCS3/dev_hdd0`). It is a
+per-content option, so a title can be pointed at the existing save-root
+installation by selecting `Saves` without changing the standalone RPCS3 data
+layout.
+
 ## Milestone boundaries
 
 Implemented:
@@ -80,4 +89,4 @@ Next milestone:
 - Extend controller support beyond player one and add motion input.
 - Replace the initial CPU frame readback path with a shared hardware-rendering
   path where the frontend and RPCS3 renderer can safely interoperate.
-- Add core options, save-directory mapping and broader title/regression tests.
+- Broaden per-title option coverage and add more title/regression tests.

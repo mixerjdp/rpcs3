@@ -4,8 +4,8 @@
 
 namespace
 {
-constexpr const char* core_name = "RPCS3 (Audio/Input Preview)";
-constexpr const char* core_version = "0.3.0-audio-input-preview";
+constexpr const char* core_name = "RPCS3";
+constexpr const char* core_version = "0.3.0";
 constexpr const char* supported_extensions = "elf|self|bin|iso|m3u|ps3";
 }
 

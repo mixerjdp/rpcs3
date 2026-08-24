@@ -51,6 +51,7 @@ private:
 	void submit_audio();
 	void update_progress_overlay(bool frame_received);
 	unsigned get_resolution_scale_percent() const;
+	bool get_dev_hdd0_in_system() const;
 	std::string get_system_directory() const;
 	std::string get_save_directory() const;
 
@@ -76,6 +77,7 @@ private:
 	bool m_audio_stream_logged = false;
 	bool m_audio_activity_logged = false;
 	bool m_audio_diagnostic_logged = false;
+	bool m_frame_step_active = false;
 	bool m_progress_overlay_active = false;
 	std::string m_progress_message;
 	std::vector<std::uint32_t> m_progress_base_framebuffer;

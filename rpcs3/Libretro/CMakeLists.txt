@@ -88,7 +88,7 @@ else()
     target_compile_options(rpcs3_libretro PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-set(RPCS3_LIBRETRO_VERSION "0.3.0-audio-input-preview")
+set(RPCS3_LIBRETRO_VERSION "0.3.0")
 configure_file(rpcs3_libretro.info.in rpcs3_libretro.info @ONLY)
 
 install(TARGETS rpcs3_libretro

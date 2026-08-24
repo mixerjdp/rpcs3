@@ -110,8 +110,9 @@ constexpr std::array<retro_input_descriptor, 17> input_descriptors{{
 	{0, 0, 0, 0, nullptr},
 }};
 
-constexpr std::array<retro_variable, 2> core_options{{
+constexpr std::array<retro_variable, 3> core_options{{
 	{"rpcs3_resolution_scale", "Resolution Scale; 100%|150%|200%|300%"},
+	{"rpcs3_dev_hdd0_location", "Dev HDD0 Location; System|Saves"},
 	{nullptr, nullptr},
 }};
 } // namespace
@@ -202,6 +203,19 @@ unsigned core_state::get_resolution_scale_percent() const
 	}
 
 	return 100;
+}
+
+bool core_state::get_dev_hdd0_in_system() const
+{
+	retro_variable variable{"rpcs3_dev_hdd0_location", nullptr};
+	if (m_environment && m_environment(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) && variable.value)
+	{
+		return std::string_view{variable.value} != "Saves";
+	}
+
+	// System is the first/default value in the core option list and is also
+	// the safest location for a fresh portable RetroArch installation.
+	return true;
 }
 
 void core_state::init()
@@ -306,9 +320,45 @@ void core_state::run()
 		update_input();
 	}
 
+	bool fast_forward = false;
+	bool frame_stepping = false;
+	if (m_environment)
+	{
+		bool frontend_fast_forward = false;
+		if (m_environment(RETRO_ENVIRONMENT_GET_FASTFORWARDING, &frontend_fast_forward))
+		{
+			fast_forward = frontend_fast_forward;
+		}
+
+		retro_throttle_state throttle_state{};
+		if (m_environment(RETRO_ENVIRONMENT_GET_THROTTLE_STATE, &throttle_state))
+		{
+			fast_forward = fast_forward || throttle_state.mode == RETRO_THROTTLE_FAST_FORWARD;
+			frame_stepping = throttle_state.mode == RETRO_THROTTLE_FRAME_STEPPING;
+		}
+	}
+
 	bool frame_received = false;
 	if (m_emulator)
 	{
+		m_emulator->set_fast_forward(fast_forward);
+
+		if (m_content_loaded && frame_stepping)
+		{
+			// libretro frontends call retro_run once for each requested step. The
+			// bridge resumes RPCS3, waits for one present (with a bounded timeout),
+			// and pauses again so a frame-step cannot spin at thousands of FPS.
+			m_emulator->step_frame();
+			m_frame_step_active = true;
+		}
+		else if (m_frame_step_active)
+		{
+			// Leaving the frontend's frame-step mode returns the title to normal
+			// running before the next frame is consumed.
+			m_emulator->resume();
+			m_frame_step_active = false;
+		}
+
 		video_frame frame;
 		if (m_emulator->take_frame(frame) && !frame.pixels.empty())
 		{
@@ -365,6 +415,7 @@ bool core_state::load_game(const retro_game_info* game)
 
 	std::string error;
 	m_emulator->set_resolution_scale(get_resolution_scale_percent());
+	m_emulator->set_dev_hdd0_location(get_dev_hdd0_in_system());
 	show_message("RPCS3: preparing PPU/SPU caches...", 600);
 	if (!m_emulator->boot(game->path, error))
 	{
@@ -379,6 +430,7 @@ bool core_state::load_game(const retro_game_info* game)
 	m_audio_stream_logged = false;
 	m_audio_activity_logged = false;
 	m_audio_diagnostic_logged = false;
+	m_frame_step_active = false;
 	m_progress_overlay_active = false;
 	m_progress_message.clear();
 	m_progress_base_framebuffer.clear();
@@ -401,6 +453,7 @@ void core_state::unload_game()
 
 	m_content_loaded = false;
 	m_frame_counter = 0;
+	m_frame_step_active = false;
 	m_progress_overlay_active = false;
 	m_progress_message.clear();
 	m_progress_base_framebuffer.clear();

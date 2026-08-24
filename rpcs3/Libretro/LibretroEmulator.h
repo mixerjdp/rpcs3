@@ -35,8 +35,13 @@ public:
 
 	bool initialize(const std::string& system_directory, const std::string& save_directory, std::string& error);
 	void set_resolution_scale(unsigned percent);
+	void set_dev_hdd0_location(bool use_system_directory);
+	void set_fast_forward(bool enabled);
 	bool boot(const std::string& content_path, std::string& error);
 	void stop();
+	bool pause();
+	void resume();
+	bool step_frame(unsigned timeout_ms = 250);
 	bool restart(std::string& error);
 	bool take_frame(video_frame& frame);
 	audio_pull_state take_audio(std::span<std::int16_t> interleaved_stereo);

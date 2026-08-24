@@ -18,7 +18,9 @@
 #include "Emu/Io/Null/null_music_handler.h"
 #include "Emu/RSX/GSFrameBase.h"
 #include "Emu/RSX/Null/NullGSRender.h"
+#include "Emu/RSX/RSXThread.h"
 #include "Emu/RSX/VK/VKGSRender.h"
+#include "Emu/VFS.h"
 #include "Input/pad_thread.h"
 #include "Utilities/Thread.h"
 #include "util/video_source.h"
@@ -39,6 +41,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+LOG_CHANNEL(libretro_log, "LIBRETRO");
 
 namespace
 {
@@ -218,6 +222,7 @@ public:
 		m_pending.width = width;
 		m_pending.height = height;
 		m_has_pending = true;
+		++m_sequence;
 	}
 
 	bool take(rpcs3::libretro::video_frame& destination)
@@ -241,10 +246,17 @@ public:
 		m_has_pending = false;
 	}
 
+	u64 sequence()
+	{
+		std::lock_guard lock(m_mutex);
+		return m_sequence;
+	}
+
 private:
 	std::mutex m_mutex;
 	rpcs3::libretro::video_frame m_pending;
 	bool m_has_pending = false;
+	u64 m_sequence = 0;
 };
 
 #ifdef _WIN32
@@ -438,9 +450,18 @@ public:
 		{
 			system_path /= "rpcs3";
 		}
-		const std::filesystem::path save_path = std::filesystem::u8path(save_directory.empty() ? system_directory : save_directory) / "rpcs3";
+		std::filesystem::path save_path = std::filesystem::u8path(save_directory.empty() ? system_directory : save_directory);
+		// RetroArch normally gives the core its own save directory already
+		// (for example, <frontend>/saves/RPCS3). Do not append a second rpcs3
+		// component in that case. Older frontends may still provide the save root,
+		// so retain the fallback subdirectory for those callers.
+		const std::string save_directory_name = save_path.filename().string();
+		if (save_directory_name != "rpcs3" && save_directory_name != "RPCS3")
+		{
+			save_path /= "rpcs3";
+		}
 		std::error_code filesystem_error;
-		std::filesystem::create_directories(system_path, filesystem_error);
+		std::filesystem::create_directories(system_path / "dev_hdd0", filesystem_error);
 		if (filesystem_error || !std::filesystem::is_directory(system_path))
 		{
 			error = "Could not create the RPCS3 system directory: " + system_path.string();
@@ -465,6 +486,9 @@ public:
 		{
 			return false;
 		}
+
+		m_system_path = system_path.string();
+		m_save_path = save_path.string();
 
 		std::wstring data_directory_w = system_path.wstring();
 		// fs::get_config_dir() treats RPCS3_CONFIG_DIR like an executable path
@@ -550,6 +574,7 @@ public:
 		}
 
 		stop();
+		mount_dev_hdd0();
 		m_readback_gate->store(true);
 		thread_ctrl::initialize_exception_handler();
 		m_mailbox->clear();
@@ -595,8 +620,30 @@ public:
 		}
 	}
 
+	void set_dev_hdd0_location(bool use_system_directory)
+	{
+		m_use_system_dev_hdd0 = use_system_directory;
+
+		// The option is normally set immediately before boot. If a frontend
+		// changes it while no title is running, update the already initialized
+		// VFS immediately; boot() repeats this after stopping any previous title.
+		if (m_initialized && !Emu.IsRunning() && !Emu.IsStarting())
+		{
+			mount_dev_hdd0();
+		}
+	}
+
+	void set_fast_forward(bool enabled)
+	{
+		// Reuse RPCS3's native boost path. It removes the RSX frame limiter while
+		// leaving guest clocks, timers, audio and video pacing untouched.
+		g_disable_frame_limit = enabled;
+	}
+
 	void stop()
 	{
+		set_fast_forward(false);
+
 		if (!m_initialized)
 		{
 			return;
@@ -624,6 +671,60 @@ public:
 
 		pump_main_thread_callbacks();
 		thread_ctrl::cleanup_exception_handler();
+	}
+
+	bool pause()
+	{
+		if (!m_initialized || Emu.IsStopped())
+		{
+			return false;
+		}
+
+		// The libretro frontend calls this on the same thread that pumps RPCS3's
+		// main-thread callbacks, so Pause's synchronous callback is safe here.
+		return Emu.Pause(false, false);
+	}
+
+	void resume()
+	{
+		if (m_initialized && Emu.IsPaused())
+		{
+			Emu.Resume();
+		}
+	}
+
+	bool step_frame(unsigned timeout_ms)
+	{
+		if (!m_initialized || Emu.IsStopped())
+		{
+			return false;
+		}
+
+		const u64 sequence_before = m_mailbox ? m_mailbox->sequence() : 0;
+		if (Emu.IsPaused())
+		{
+			Emu.Resume();
+		}
+
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+		bool received_frame = false;
+		while (m_mailbox && m_mailbox->sequence() <= sequence_before &&
+			std::chrono::steady_clock::now() < deadline)
+		{
+			// A guest thread may queue a call to the frontend while it is rendering.
+			// Pump it during the bounded wait so frame stepping cannot deadlock the
+			// same main-thread callback path used by Emulator::Pause.
+			pump_main_thread_callbacks();
+			std::this_thread::sleep_for(1ms);
+		}
+
+		received_frame = m_mailbox && m_mailbox->sequence() > sequence_before;
+		if (Emu.IsRunning())
+		{
+			Emu.Pause(false, false);
+		}
+		pump_main_thread_callbacks();
+		return received_frame;
 	}
 
 	bool restart(std::string& error)
@@ -684,6 +785,35 @@ public:
 	}
 
 private:
+	void mount_dev_hdd0()
+	{
+		const std::string& root = m_use_system_dev_hdd0 ? m_system_path : m_save_path;
+		if (root.empty())
+		{
+			return;
+		}
+
+		const std::filesystem::path dev_hdd0_path = std::filesystem::u8path(root) / "dev_hdd0";
+		std::error_code filesystem_error;
+		std::filesystem::create_directories(dev_hdd0_path, filesystem_error);
+		if (filesystem_error)
+		{
+			return;
+		}
+
+		const std::string host_path = dev_hdd0_path.string();
+		// Keep the selection in the libretro VFS state as well as the current
+		// mount. Emu can rebuild its VFS manager during a boot/restart and will
+		// call apply_libretro_vfs_paths() again; the selected root must survive
+		// that reinitialization instead of silently reverting to System.
+		set_libretro_dev_hdd0_directory(host_path + "/");
+		g_cfg_vfs.dev_hdd0.set(host_path + "/");
+		vfs::unmount("/dev_hdd0");
+		vfs::mount("/dev_hdd0", host_path + "/");
+		libretro_log.notice("Mounted /dev_hdd0 at '%s' (location=%s)", host_path,
+			m_use_system_dev_hdd0 ? "System" : "Saves");
+	}
+
 #ifdef _WIN32
 	bool initialize_winsock(std::string& error)
 	{
@@ -883,6 +1013,9 @@ private:
 
 	bool m_initialized = false;
 	unsigned m_resolution_scale_percent = 100;
+	bool m_use_system_dev_hdd0 = true;
+	std::string m_system_path;
+	std::string m_save_path;
 	std::shared_ptr<frame_mailbox> m_mailbox;
 	std::shared_ptr<libretro_audio_backend> m_audio_backend;
 	std::shared_ptr<std::atomic<bool>> m_readback_gate = std::make_shared<std::atomic<bool>>(true);
@@ -912,6 +1045,16 @@ void emulator_bridge::set_resolution_scale(unsigned percent)
 	m_impl->set_resolution_scale(percent);
 }
 
+void emulator_bridge::set_dev_hdd0_location(bool use_system_directory)
+{
+	m_impl->set_dev_hdd0_location(use_system_directory);
+}
+
+void emulator_bridge::set_fast_forward(bool enabled)
+{
+	m_impl->set_fast_forward(enabled);
+}
+
 bool emulator_bridge::boot(const std::string& content_path, std::string& error)
 {
 	return m_impl->boot(content_path, error);
@@ -920,6 +1063,21 @@ bool emulator_bridge::boot(const std::string& content_path, std::string& error)
 void emulator_bridge::stop()
 {
 	m_impl->stop();
+}
+
+bool emulator_bridge::pause()
+{
+	return m_impl->pause();
+}
+
+void emulator_bridge::resume()
+{
+	m_impl->resume();
+}
+
+bool emulator_bridge::step_frame(unsigned timeout_ms)
+{
+	return m_impl->step_frame(timeout_ms);
 }
 
 bool emulator_bridge::restart(std::string& error)

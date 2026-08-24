@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -23,6 +24,8 @@ bool g_received_input_descriptors = false;
 std::string g_last_message;
 unsigned g_message_updates = 0;
 const char* g_system_directory = ".";
+const char* g_save_directory = ".";
+const char* g_dev_hdd0_location = "System";
 
 bool check(bool condition, const char* message)
 {
@@ -83,6 +86,24 @@ bool RETRO_CALLCONV environment(unsigned command, void* data)
 		{
 			*static_cast<const char**>(data) = g_system_directory;
 			return true;
+		}
+		return false;
+	case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+		if (data)
+		{
+			*static_cast<const char**>(data) = g_save_directory;
+			return true;
+		}
+		return false;
+	case RETRO_ENVIRONMENT_GET_VARIABLE:
+		if (data)
+		{
+			auto* variable = static_cast<retro_variable*>(data);
+			if (variable->key && std::strcmp(variable->key, "rpcs3_dev_hdd0_location") == 0)
+			{
+				variable->value = g_dev_hdd0_location;
+				return true;
+			}
 		}
 		return false;
 	default:
@@ -155,12 +176,20 @@ int main(int argc, char** argv)
 	{
 		g_system_directory = argv[2];
 	}
+	if (argc >= 4)
+	{
+		g_save_directory = argv[3];
+	}
+	if (argc >= 5)
+	{
+		g_dev_hdd0_location = argv[4];
+	}
 
 	passed &= check(retro_api_version() == RETRO_API_VERSION, "unexpected libretro API version");
 
 	retro_system_info system_info{};
 	retro_get_system_info(&system_info);
-	passed &= check(system_info.library_name && std::strcmp(system_info.library_name, "RPCS3 (Audio/Input Preview)") == 0,
+	passed &= check(system_info.library_name && std::strcmp(system_info.library_name, "RPCS3") == 0,
 		"unexpected library name");
 	passed &= check(system_info.need_fullpath, "the core must require full content paths");
 
@@ -185,7 +214,7 @@ int main(int argc, char** argv)
 			return 1;
 		}
 
-		constexpr unsigned integration_frames = 1800;
+		const unsigned integration_frames = argc >= 6 ? static_cast<unsigned>(std::strtoul(argv[5], nullptr, 10)) : 1800;
 		for (g_test_frame = 0; passed && g_test_frame < integration_frames; ++g_test_frame)
 		{
 			retro_run();
@@ -196,7 +225,14 @@ int main(int argc, char** argv)
 		passed &= check(g_audio_calls == integration_frames, "real audio callback count mismatch");
 		passed &= check(g_audio_frames == static_cast<std::size_t>(integration_frames) * 800,
 			"real audio frame count mismatch");
-		passed &= check(g_nonzero_audio_samples != 0, "RPCS3 did not deliver non-silent game audio");
+		// Short path-selection smoke runs can finish while PPU/SPU compilation is
+		// still active, before the title opens its audio stream. Keep the full
+		// integration test strict, but do not turn a bounded mount test into an
+		// audio-playback test.
+		if (integration_frames >= 1800)
+		{
+			passed &= check(g_nonzero_audio_samples != 0, "RPCS3 did not deliver non-silent game audio");
+		}
 		passed &= check(g_input_polls == integration_frames, "real input poll count mismatch");
 		passed &= check(g_message_updates != 0, "progress/start messages were not delivered to the frontend");
 		passed &= check(g_progress_bar_frames != 0, "the progress bar never reached the video callback");
