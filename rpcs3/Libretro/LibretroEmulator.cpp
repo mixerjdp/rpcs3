@@ -999,7 +999,7 @@ private:
 			return false;
 		};
 		callbacks.get_font_dirs = [] { return std::vector<std::string>{}; };
-		callbacks.on_install_pkgs = [](const std::vector<std::string>&) { return false; };
+		callbacks.on_install_pkgs = [](const std::vector<std::string>&, bool) { return false; };
 		callbacks.add_breakpoint = [](u32) {};
 		callbacks.display_sleep_control_supported = [] { return false; };
 		callbacks.enable_display_sleep = [](bool) {};
