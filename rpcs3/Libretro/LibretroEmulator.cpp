@@ -999,7 +999,16 @@ private:
 			return false;
 		};
 		callbacks.get_font_dirs = [] { return std::vector<std::string>{}; };
-		callbacks.on_install_pkgs = [](const std::vector<std::string>&, bool) { return false; };
+		callbacks.on_install_pkgs = [](const std::vector<std::string>& pkgs, bool)
+		{
+			// A libretro core has no Qt package-selection dialog. Treat disc-bundled
+			// packages as explicitly skipped, rather than as an installation failure:
+			// RPCS3 will create its lock file and proceed to boot the disc EBOOT.
+			// This matches choosing "Skip" in the standalone UI. External PKG
+			// installation remains a separate, intentionally unimplemented feature.
+			libretro_log.notice("Skipping %zu package(s) bundled with the disc.", pkgs.size());
+			return true;
+		};
 		callbacks.add_breakpoint = [](u32) {};
 		callbacks.display_sleep_control_supported = [] { return false; };
 		callbacks.enable_display_sleep = [](bool) {};
