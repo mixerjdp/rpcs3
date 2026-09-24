@@ -1,6 +1,7 @@
 #include "LibretroEmulator.h"
 
 #include "Emu/System.h"
+#include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
 #include "Emu/localized_string_id.h"
 #include "Emu/system_config.h"
@@ -897,7 +898,7 @@ private:
 
 	void install_callbacks()
 	{
-		EmuCallbacks callbacks{};
+		emu_callbacks callbacks{};
 		callbacks.call_from_main_thread = [this](std::function<void()> function, atomic_t<u32>* wake_up)
 		{
 			dispatch_main_thread_call(std::move(function), wake_up);
@@ -1017,7 +1018,7 @@ private:
 		callbacks.enable_gamemode = [](bool) {};
 		callbacks.get_database_config = [](const std::string&) { return std::string{}; };
 
-		Emu.SetCallbacks(std::move(callbacks));
+		g_emu_callbacks = std::move(callbacks);
 	}
 
 	bool m_initialized = false;

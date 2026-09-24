@@ -23,6 +23,8 @@ std::size_t g_audio_frames = 0;
 std::size_t g_nonzero_audio_samples = 0;
 unsigned g_test_frame = 0;
 bool g_received_message = false;
+bool g_received_elapsed_message = false;
+bool g_received_counted_progress = false;
 bool g_received_input_descriptors = false;
 std::array<unsigned, rpcs3::libretro::max_libretro_players> g_input_descriptor_counts{};
 std::string g_last_message;
@@ -87,6 +89,10 @@ bool RETRO_CALLCONV environment(unsigned command, void* data)
 		{
 			const auto* message = static_cast<const retro_message*>(data);
 			g_received_message = message->msg && message->frames != 0;
+			g_received_elapsed_message = g_received_elapsed_message ||
+				(message->msg && std::strstr(message->msg, "Elapsed:") != nullptr);
+			g_received_counted_progress = g_received_counted_progress ||
+				(message->msg && std::strstr(message->msg, "Progress:") != nullptr);
 			if (message->msg && g_last_message != message->msg)
 			{
 				g_last_message = message->msg;
@@ -257,7 +263,12 @@ int main(int argc, char** argv)
 		}
 		passed &= check(g_input_polls == integration_frames, "real input poll count mismatch");
 		passed &= check(g_message_updates != 0, "progress/start messages were not delivered to the frontend");
-		passed &= check(g_progress_bar_frames != 0, "the progress bar never reached the video callback");
+		passed &= check(g_received_elapsed_message, "loading status did not include elapsed time");
+		if (g_received_counted_progress)
+		{
+			passed &= check(g_progress_bar_frames != 0,
+				"numeric preparation progress was reported but the video progress bar was not drawn");
+		}
 
 		retro_unload_game();
 		retro_deinit();

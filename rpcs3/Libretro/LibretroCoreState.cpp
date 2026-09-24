@@ -6,8 +6,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include <span>
 #include <string>
 #include <string_view>
@@ -54,6 +57,19 @@ progress_snapshot read_progress_snapshot()
 	}
 
 	return progress;
+}
+
+std::string format_elapsed_time(std::chrono::seconds::rep total_seconds)
+{
+	const auto nonnegative_seconds = std::max<std::chrono::seconds::rep>(0, total_seconds);
+	const auto hours = nonnegative_seconds / 3600;
+	const auto minutes = (nonnegative_seconds / 60) % 60;
+	const auto seconds = nonnegative_seconds % 60;
+
+	std::ostringstream formatted;
+	formatted << std::setfill('0') << std::setw(2) << hours << ':'
+		<< std::setw(2) << minutes << ':' << std::setw(2) << seconds;
+	return formatted.str();
 }
 
 void draw_progress_bar(std::vector<std::uint32_t>& framebuffer, unsigned width, unsigned height, std::uint32_t value)
@@ -322,6 +338,15 @@ void core_state::reset()
 	}
 
 	m_frame_counter = 0;
+	m_content_load_started = std::chrono::steady_clock::now();
+	m_last_loading_message_time = {};
+	m_cached_elapsed_seconds = -1;
+	m_cached_elapsed_time.clear();
+	m_first_frame_received = false;
+	m_progress_overlay_active = false;
+	m_progress_message.clear();
+	m_progress_base_framebuffer.clear();
+	show_message("RPCS3: restarted; waiting for the first rendered frame.", 120);
 	log(RETRO_LOG_INFO, "RPCS3 title reset requested.");
 }
 
@@ -435,9 +460,15 @@ bool core_state::load_game(const retro_game_info* game)
 	std::string error;
 	m_emulator->set_resolution_scale(get_resolution_scale_percent());
 	m_emulator->set_dev_hdd0_location(get_dev_hdd0_in_system());
+	m_content_load_started = std::chrono::steady_clock::now();
+	m_cached_elapsed_seconds = -1;
+	m_cached_elapsed_time.clear();
 	show_message("RPCS3: preparing PPU/SPU caches...", 600);
 	if (!m_emulator->boot(game->path, error))
 	{
+		m_content_load_started = {};
+		m_cached_elapsed_seconds = -1;
+		m_cached_elapsed_time.clear();
 		log(RETRO_LOG_ERROR, error.c_str());
 		show_message(error.c_str(), 600);
 		return false;
@@ -445,6 +476,10 @@ bool core_state::load_game(const retro_game_info* game)
 
 	m_content_loaded = true;
 	m_frame_counter = 0;
+	m_last_loading_message_time = {};
+	m_cached_elapsed_seconds = -1;
+	m_cached_elapsed_time.clear();
+	m_first_frame_received = false;
 	m_input_activity_logged.fill(false);
 	m_audio_stream_logged = false;
 	m_audio_activity_logged = false;
@@ -472,6 +507,11 @@ void core_state::unload_game()
 
 	m_content_loaded = false;
 	m_frame_counter = 0;
+	m_content_load_started = {};
+	m_last_loading_message_time = {};
+	m_cached_elapsed_seconds = -1;
+	m_cached_elapsed_time.clear();
+	m_first_frame_received = false;
 	m_frame_step_active = false;
 	m_progress_overlay_active = false;
 	m_progress_message.clear();
@@ -656,6 +696,25 @@ void core_state::submit_audio()
 
 void core_state::update_progress_overlay(bool frame_received)
 {
+	const auto now = std::chrono::steady_clock::now();
+	const auto elapsed_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+		now - m_content_load_started).count();
+	if (elapsed_seconds != m_cached_elapsed_seconds)
+	{
+		m_cached_elapsed_seconds = elapsed_seconds;
+		m_cached_elapsed_time = format_elapsed_time(elapsed_seconds);
+	}
+
+	if (frame_received && !m_first_frame_received)
+	{
+		m_first_frame_received = true;
+		const std::string message = "RPCS3: first video frame received.\nElapsed: " +
+			m_cached_elapsed_time + ".";
+		show_message(message.c_str(), 180);
+		m_progress_message.clear();
+		m_last_loading_message_time = now;
+	}
+
 	const progress_snapshot progress = read_progress_snapshot();
 	if (!progress.active())
 	{
@@ -668,7 +727,26 @@ void core_state::update_progress_overlay(bool frame_received)
 			m_progress_overlay_active = false;
 			m_progress_message.clear();
 			m_progress_base_framebuffer.clear();
-			show_message("RPCS3: PPU/SPU preparation complete.", 90);
+			if (m_first_frame_received)
+			{
+				show_message("RPCS3: PPU/SPU preparation complete.", 90);
+			}
+		}
+
+		if (!m_first_frame_received)
+		{
+			const std::string message = "RPCS3: waiting for the first rendered frame.\nElapsed: " +
+				m_cached_elapsed_time +
+				"\nThe game is still preparing; please wait.";
+			if (message != m_progress_message ||
+				m_last_loading_message_time == std::chrono::steady_clock::time_point{} ||
+				now - m_last_loading_message_time >= std::chrono::seconds(1))
+			{
+				show_message(message.c_str(), 120);
+				m_progress_message = message;
+				m_last_loading_message_time = now;
+			}
+			return;
 		}
 		return;
 	}
@@ -696,11 +774,19 @@ void core_state::update_progress_overlay(bool frame_received)
 	{
 		message += "\nPlease wait...";
 	}
+	if (!m_first_frame_received)
+	{
+		message += "\nElapsed: " + m_cached_elapsed_time;
+		message += "\nWaiting for the first rendered frame.";
+	}
 
-	if (!m_progress_overlay_active || m_progress_message != message || (m_frame_counter % 30) == 0)
+	if (!m_progress_overlay_active || m_progress_message != message ||
+		m_last_loading_message_time == std::chrono::steady_clock::time_point{} ||
+		now - m_last_loading_message_time >= std::chrono::seconds(1))
 	{
 		show_message(message.c_str(), 120);
 		m_progress_message = message;
+		m_last_loading_message_time = now;
 	}
 
 	draw_progress_bar(m_framebuffer, m_video_width, m_video_height, percent);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -73,8 +74,13 @@ private:
 	unsigned m_video_height = video_height;
 	std::array<unsigned, max_libretro_players> m_controller_devices{};
 	std::uint64_t m_frame_counter = 0;
+	std::chrono::steady_clock::time_point m_content_load_started{};
+	std::chrono::steady_clock::time_point m_last_loading_message_time{};
+	std::chrono::seconds::rep m_cached_elapsed_seconds = -1;
+	std::string m_cached_elapsed_time;
 	bool m_initialized = false;
 	bool m_content_loaded = false;
+	bool m_first_frame_received = false;
 	std::array<bool, max_libretro_players> m_input_activity_logged{};
 	bool m_audio_stream_logged = false;
 	bool m_audio_activity_logged = false;
